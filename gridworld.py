@@ -17,7 +17,7 @@ def get_init_world(SX, SY, posx, posy, mushroom_posx, mushroom_posy, mushroom_ty
 
     world = world.at[mushroom_posx, mushroom_posy, 2].set(mushroom_type)
 
-    world = world.at[posx, posy, 4].set(signal)
+    world = world.at[posx, posy, 3].set(signal)
 
     return world
 
@@ -35,15 +35,17 @@ class MushroomWorld(eqx.Module):
                  grid_x,
                  grid_y,
                  nb_agents,
-                 start_prop,
-                 init_mushrooms,
+                 agent_start_prop,
+                 starting_energy,
+                 mushroom_prop
                  ):
         self.seed = seed
         self.grid_x = grid_x
         self.grid_y = grid_y
         self.nb_agents = nb_agents
-        self.start_prop = start_prop
-        self.init_mushrooms = init_mushrooms
+        self.agent_start_prop = agent_start_prop
+        self.starting_energy = starting_energy
+        self.mushroom_prop = mushroom_prop
 
 
     def _reset_fn(self):
@@ -53,14 +55,31 @@ class MushroomWorld(eqx.Module):
         nb_agents = self.nb_agents
 
         key = jax.random.key(self.seed)
+
         key, subkey = jax.random.split(key)
-        posx = jax.random.randint(subkey, nb_agents, 0, SX - 1)
+        all_cells = jnp.arange(SX * SY)
+        chosen = jax.random.choice(subkey, all_cells, shape=(nb_agents,), replace=False)
+        posx = chosen // SY
+        posy = chosen % SY
+
+        num_mushroom = round(SX * SY * self.mushroom_prop)
+
         key, subkey = jax.random.split(key)
-        posy = jax.random.randint(subkey, nb_agents, 0, SY - 1)
+        mush_chosen = jax.random.choice(subkey, all_cells, shape=(num_mushroom,), replace=False)
+        mushroom_posx = mush_chosen // SY
+        mushroom_posy = mush_chosen % SY
 
-        alive = jnp.where(jnp.arange(nb_agents) < self.start_prop * nb_agents, 1, 0)
+        mushroom_type = jnp.where(jnp.arange(num_mushroom) < num_mushroom // 2, 0, 1)
+        signal = jnp.zeros(nb_agents)
 
+        world = get_init_world(SX, SY, posx, posy, mushroom_posx, mushroom_posy, mushroom_type, signal)
 
+        alive = jnp.where(jnp.arange(nb_agents) < self.agent_start_prop * nb_agents, 1, 0)
+        energy = jnp.where(alive, self.starting_energy, 0)
+        age = jnp.zeros(shape=(nb_agents,))
+        agents = Agent(alive=alive, posx=posx, posy=posy, energy=energy, age=age)
+
+        return (world, agents)
 
 
 
