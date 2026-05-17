@@ -1,6 +1,9 @@
 import jax
 import jax.numpy as jnp
 import equinox as eqx
+from scipy.optimize import direct
+
+
 
 
 # Initialise a world that is a grid of size X, Y. Populate this grid with n agents at random locations.
@@ -9,24 +12,19 @@ import equinox as eqx
 # Each agent receives an input of 8 rays (for each direction) with max distance and features of intervening
 # objects (16 features x 8 rays = input vector). They have an output of 7 (3 for signal and 4 for movement).
 
-def get_init_world(SX, SY, posx, posy, mushroom_posx, mushroom_posy, mushroom_type, signal):
-    world = jnp.zeros((SX, SY, 4))
-    world = world.at[posx, posy, 0].set(1)
 
-    world = world.at[mushroom_posx, mushroom_posy, 1].set(1)
-
-    world = world.at[mushroom_posx, mushroom_posy, 2].set(mushroom_type)
-
-    world = world.at[posx, posy, 3].set(signal)
-
-    return world
-
-class Agent(eqx.Module):
-    alive: jnp.ndarray
+class Agents(eqx.Module):
     posx: jnp.ndarray
     posy: jnp.ndarray
-    energy: jnp.ndarray
-    age: jnp.ndarray
+    direction: jnp.ndarray
+    last_signal: jnp.ndarray
+
+
+class Mushrooms(eqx.Module):
+    posx: jnp.ndarray
+    posy: jnp.ndarray
+    type: jnp.ndarray
+    features: jnp.ndarray
 
 
 class MushroomWorld(eqx.Module):
@@ -35,17 +33,13 @@ class MushroomWorld(eqx.Module):
                  grid_x,
                  grid_y,
                  nb_agents,
-                 agent_start_prop,
-                 starting_energy,
-                 mushroom_prop
+                 nb_mushrooms
                  ):
         self.seed = seed
         self.grid_x = grid_x
         self.grid_y = grid_y
         self.nb_agents = nb_agents
-        self.agent_start_prop = agent_start_prop
-        self.starting_energy = starting_energy
-        self.mushroom_prop = mushroom_prop
+        self.nb_mushrooms = nb_mushrooms
 
 
     def _reset_fn(self):
@@ -54,15 +48,24 @@ class MushroomWorld(eqx.Module):
         SY = self.grid_y
         nb_agents = self.nb_agents
 
+        # set key
         key = jax.random.key(self.seed)
 
+        # initialise agent positions
         key, subkey = jax.random.split(key)
         all_cells = jnp.arange(SX * SY)
         chosen = jax.random.choice(subkey, all_cells, shape=(nb_agents,), replace=False)
         posx = chosen // SY
         posy = chosen % SY
 
-        num_mushroom = round(SX * SY * self.mushroom_prop)
+        # initialise agent directions and empty signal
+        key, subkey = jax.random.split(key)
+        direction = jax.random.randint(subkey, shape=(nb_agents,), minval=0, maxval=4)
+        signal = jnp.zeros(nb_agents)
+
+
+        # initialise mushroom positions, type and features
+        num_mushroom = self.nb_mushrooms
 
         key, subkey = jax.random.split(key)
         mush_chosen = jax.random.choice(subkey, all_cells, shape=(num_mushroom,), replace=False)
@@ -70,20 +73,98 @@ class MushroomWorld(eqx.Module):
         mushroom_posy = mush_chosen % SY
 
         mushroom_type = jnp.where(jnp.arange(num_mushroom) < num_mushroom // 2, 0, 1)
-        signal = jnp.zeros(nb_agents)
 
-        world = get_init_world(SX, SY, posx, posy, mushroom_posx, mushroom_posy, mushroom_type, signal)
+        key, subkey1, subkey2 = jax.random.split(key, 3)
+        mushroom_features = jnp.where(mushroom_type,
+                                      jax.random.randint(subkey1, shape=(num_mushroom,), minval=0, maxval=10),
+                                      jax.random.randint(subkey2, shape=(num_mushroom,), minval=11, maxval=20))
 
-        alive = jnp.where(jnp.arange(nb_agents) < self.agent_start_prop * nb_agents, 1, 0)
-        energy = jnp.where(alive, self.starting_energy, 0)
-        age = jnp.zeros(shape=(nb_agents,))
-        agents = Agent(alive=alive, posx=posx, posy=posy, energy=energy, age=age)
+        # create agents and mushrooms data structure
 
-        return (world, agents)
+        agents = Agents(posx=posx, posy=posy, direction=direction, last_signal=signal)
+        mushrooms = Mushrooms(posx=mushroom_posx, posy=mushroom_posy, type=mushroom_type, features=mushroom_features)
 
-
+        return (agents, mushrooms)
 
 
+    def _step_fn(self, key, agents, mushrooms, perc_radius):
+
+        key, subkey = jax.random.split(key)
+
+        # compute distance matrix
+        x_diff = agents.posx[:, None] - mushrooms.posx[None, :]
+        y_diff = agents.posy[:, None] - mushrooms.posy[None, :]
+        distance_sq = x_diff**2 + y_diff**2
+        distance_sq + jax.random.uniform(subkey, distance_sq.shape) * 1e-6
+
+        # compute directions
+        distance = jnp.sqrt(distance_sq + 1e-8)
+        inv_dist = 1.0 / distance
+        cos_dir = x_diff * inv_dist
+        sin_dir = y_diff * inv_dist
+
+        # find the nearest mushroom for each agent
+        nearest_mush = jnp.argmin(distance_sq, axis=1)
+
+        # find input direction for nearest mushrooms per agent
+        input_cos = cos_dir[nearest_mush]
+        input_sin = sin_dir[nearest_mush]
+
+        # if the agent within perc_radius of nearest mushroom, receive mushroom's perceptual features
+
+        features =  jnp.where(distance[nearest_mush] <= perc_radius, mushrooms.features[nearest_mush], 20)
+
+        # obtain signals produced in last step
+        last_signal = agents.last_signal
+
+        # find the 2 agents closest to each mushroom
+        closest_agents = jnp.argsort(distance, axis=0)[:2]
+        nearest_agent_per_mush = closest_agents[0, :]
+        backup_agent_per_mush = closest_agents[1, :]
+
+        # for each agent find the agent closest to its nearest mushroom and second closest
+        agent_at_mush = nearest_agent_per_mush[nearest_mush]
+        backup_at_mush = backup_agent_per_mush[nearest_mush]
+
+        # for each agent if the agent closest to its nearest mushroom is itself, use the second-nearest
+        agents_idx = jnp.arange(self.nb_agents)
+        use_backup = (agents_idx == agent_at_mush)
+
+        signalling_agents = jnp.where(use_backup, backup_at_mush, agent_at_mush)
+
+        # only take signals from agents within the perception radius of the nearest mushroom
+        signalling_dist = distance[signalling_agents, nearest_mush]
+        signals = jnp.where(signalling_dist <= perc_radius, last_signal[signalling_agents], 8)
+
+        input = jnp.concat()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+"""
+reset_fn returns the world and the agents.
+step_fn 
+
+
+"""
 
 
 
