@@ -13,6 +13,25 @@ from scipy.optimize import direct
 # objects (16 features x 8 rays = input vector). They have an output of 7 (3 for signal and 4 for movement).
 
 
+# Create array of valid signals
+n = 3
+bits = jnp.arange(2**n)
+SIGNALS = (bits[:, None] >> jnp.arange(n)[::-1]) & 1
+SIGNALS = jnp.concat([SIGNALS, jnp.array([[0.5, 0.5, 0.5]])])
+
+
+# Create array of valid mushroom features
+mushroom_prototype = jnp.array([
+    [0, 0, 0, 0, 0, 1, 1, 1, 1, 1],
+    [1, 1, 1, 1, 1, 0, 0, 0, 0, 0],
+])
+
+bit_change = jnp.eye(10, dtype=jnp.int32)
+FEATURES = mushroom_prototype[:, None, :] ^ bit_change[None, :, :]
+FEATURES = jnp.reshape(FEATURES, (-1, 10))
+FEATURES = jnp.concat([FEATURES, jnp.full((1, 10), 0.5)])
+
+
 class Agents(eqx.Module):
     posx: jnp.ndarray
     posy: jnp.ndarray
@@ -61,7 +80,7 @@ class MushroomWorld(eqx.Module):
         # initialise agent directions and empty signal
         key, subkey = jax.random.split(key)
         direction = jax.random.randint(subkey, shape=(nb_agents,), minval=0, maxval=4)
-        signal = jnp.zeros(nb_agents)
+        signal = jnp.zeros(nb_agents, dtype=jnp.int32)
 
 
         # initialise mushroom positions, type and features
@@ -76,8 +95,8 @@ class MushroomWorld(eqx.Module):
 
         key, subkey1, subkey2 = jax.random.split(key, 3)
         mushroom_features = jnp.where(mushroom_type,
-                                      jax.random.randint(subkey1, shape=(num_mushroom,), minval=0, maxval=10),
-                                      jax.random.randint(subkey2, shape=(num_mushroom,), minval=11, maxval=20))
+                                      jax.random.randint(subkey1, shape=(num_mushroom,), minval=10, maxval=20),
+                                      jax.random.randint(subkey2, shape=(num_mushroom,), minval=0, maxval=10))
 
         # create agents and mushrooms data structure
 
@@ -95,7 +114,7 @@ class MushroomWorld(eqx.Module):
         x_diff = agents.posx[:, None] - mushrooms.posx[None, :]
         y_diff = agents.posy[:, None] - mushrooms.posy[None, :]
         distance_sq = x_diff**2 + y_diff**2
-        distance_sq + jax.random.uniform(subkey, distance_sq.shape) * 1e-6
+        distance_sq = distance_sq + jax.random.uniform(subkey, distance_sq.shape) * 1e-6
 
         # compute directions
         distance = jnp.sqrt(distance_sq + 1e-8)
@@ -107,12 +126,13 @@ class MushroomWorld(eqx.Module):
         nearest_mush = jnp.argmin(distance_sq, axis=1)
 
         # find input direction for nearest mushrooms per agent
-        input_cos = cos_dir[nearest_mush]
-        input_sin = sin_dir[nearest_mush]
+        input_cos = cos_dir[jnp.arange(self.nb_agents), nearest_mush]
+        input_sin = sin_dir[jnp.arange(self.nb_agents), nearest_mush]
 
         # if the agent within perc_radius of nearest mushroom, receive mushroom's perceptual features
 
-        features =  jnp.where(distance[nearest_mush] <= perc_radius, mushrooms.features[nearest_mush], 20)
+        dist_to_mush = distance[jnp.arange(self.nb_agents), nearest_mush]
+        features =  jnp.where(dist_to_mush <= perc_radius, mushrooms.features[nearest_mush], 20)
 
         # obtain signals produced in last step
         last_signal = agents.last_signal
@@ -136,8 +156,13 @@ class MushroomWorld(eqx.Module):
         signalling_dist = distance[signalling_agents, nearest_mush]
         signals = jnp.where(signalling_dist <= perc_radius, last_signal[signalling_agents], 8)
 
-        input = jnp.concat()
+        signals = SIGNALS[signals]
+        features = FEATURES[features]
 
+        input = jnp.concat([input_cos[:, None], input_sin[:, None], features, signals], axis=1)
+
+
+# TODO: Create agents with neural nets and feed input through neural net
 
 
 
