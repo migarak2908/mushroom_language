@@ -86,6 +86,10 @@ for chunk in range(STEPS // CHUNK):
     deaths = np.array(deaths)
     signal_dist = np.array(signal_dist)
 
+    total_edible = int(np.array(edible_consumed).sum())
+    total_poisonous = int(np.array(poisonous_consumed).sum())
+    disc_score = (total_edible - total_poisonous) / (total_edible + total_poisonous + 1e-8)
+
     for i in range(CHUNK):
         global_step = chunk * CHUNK + i
         log = {
@@ -96,16 +100,11 @@ for chunk in range(STEPS // CHUNK):
         }
         for j, label in enumerate(signal_labels):
             log[label] = int(signal_dist[i, j])
+        if i == CHUNK - 1:
+            log["edible_consumed"] = total_edible
+            log["poisonous_consumed"] = total_poisonous
+            log["discrimination_score"] = disc_score
         wandb.log(log, step=global_step)
-
-    total_edible = int(np.array(edible_consumed).sum())
-    total_poisonous = int(np.array(poisonous_consumed).sum())
-    disc_score = (total_edible - total_poisonous) / (total_edible + total_poisonous + 1e-8)
-    wandb.log({
-        "edible_consumed": total_edible,
-        "poisonous_consumed": total_poisonous,
-        "discrimination_score": disc_score,
-    }, step=chunk * CHUNK)
 
     if chunk % 10 == 0:
         print(f"Step {chunk * CHUNK}/{STEPS} — population: {n_alive[-1]}  disc: {disc_score:.3f}")
