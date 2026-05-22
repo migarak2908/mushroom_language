@@ -249,6 +249,9 @@ class MushroomWorld(eqx.Module):
 
         alive = jnp.where(energy > 0, 1, 0)
 
+        edible_consumed = (consume_mushroom * (mushroom_type == 1)[None, :]).sum()
+        poisonous_consumed = (consume_mushroom * (mushroom_type == -1)[None, :]).sum()
+
         key, subkey = jax.random.split(key)
         all_cells = jnp.arange(self.grid_x * self.grid_y)
         mush_chosen = jax.random.choice(subkey, all_cells, shape=(self.nb_mushrooms,), replace=False)
@@ -266,7 +269,7 @@ class MushroomWorld(eqx.Module):
                               shuffle_countdown=shuffle_countdown)
 
 
-        return agents, mushrooms
+        return agents, mushrooms, edible_consumed, poisonous_consumed
 
     def _compute_reproduce(self, key, agents):
 
@@ -353,7 +356,7 @@ class MushroomWorld(eqx.Module):
         actions = jax.random.bernoulli(subkey2, probs).astype(jnp.int32)
 
         # update agents and mushrooms given agent actions
-        agents, mushrooms = self._compute_update(subkey3, actions, agents, mushrooms)
+        agents, mushrooms, _, _ = self._compute_update(subkey3, actions, agents, mushrooms)
 
         # compute reproduction
         agents = self._compute_reproduce(subkey4, agents)

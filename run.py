@@ -20,8 +20,10 @@ PERC_RADIUS = 20
 STEPS = 10_000
 CHUNK = 100
 
+SHUFFLE_PERIOD = 500
+
 key = jax.random.key(SEED)
-env = MushroomWorld(SEED, SX, SY, NB_AGENTS, MAX_AGENTS, NB_MUSHROOMS, ENERGY_START, ENERGY_DECAY, MUSHROOM_NUTRITION, REPROD_THRESHOLD, REPROD_COST)
+env = MushroomWorld(SEED, SX, SY, NB_AGENTS, MAX_AGENTS, NB_MUSHROOMS, ENERGY_START, ENERGY_DECAY, MUSHROOM_NUTRITION, REPROD_THRESHOLD, REPROD_COST, SHUFFLE_PERIOD)
 agents, mushrooms = env.reset_fn()
 
 dynamic_agents, static_agents = eqx.partition(agents, eqx.is_array)
@@ -39,7 +41,7 @@ def step(carry, _):
     probs = eqx.filter_vmap(lambda n, o: n(o))(agents.network, obs)
     actions = jax.random.bernoulli(subkey2, probs).astype(jnp.int32)
 
-    agents, mushrooms = env._compute_update(subkey3, actions, agents, mushrooms)
+    agents, mushrooms, edible_consumed, poisonous_consumed = env._compute_update(subkey3, actions, agents, mushrooms)
     alive_post_update = agents.alive.sum()
 
     agents = env._compute_reproduce(subkey4, agents)
@@ -54,7 +56,7 @@ def step(carry, _):
     signal_dist = jnp.array([((agents.last_signal == i) & alive_mask).sum() for i in range(9)])
 
     dynamic_agents, _ = eqx.partition(agents, eqx.is_array)
-    return (key, dynamic_agents, mushrooms), (n_alive, mean_energy, births, deaths, signal_dist)
+    return (key, dynamic_agents, mushrooms), (n_alive, mean_energy, births, deaths, signal_dist, edible_consumed, poisonous_consumed)
 
 
 @eqx.filter_jit
@@ -76,7 +78,7 @@ signal_labels = [f"signal_{i}" for i in range(8)] + ["signal_silent"]
 
 print("Running simulation...")
 for chunk in range(STEPS // CHUNK):
-    (key, dynamic_agents, mushrooms), (n_alive, mean_energy, births, deaths, signal_dist) = run_chunk(key, dynamic_agents, mushrooms)
+    (key, dynamic_agents, mushrooms), (n_alive, mean_energy, births, deaths, signal_dist, edible_consumed, poisonous_consumed) = run_chunk(key, dynamic_agents, mushrooms)
 
     n_alive = np.array(n_alive)
     mean_energy = np.array(mean_energy)
@@ -96,8 +98,17 @@ for chunk in range(STEPS // CHUNK):
             log[label] = int(signal_dist[i, j])
         wandb.log(log, step=global_step)
 
+    total_edible = int(np.array(edible_consumed).sum())
+    total_poisonous = int(np.array(poisonous_consumed).sum())
+    disc_score = (total_edible - total_poisonous) / (total_edible + total_poisonous + 1e-8)
+    wandb.log({
+        "edible_consumed": total_edible,
+        "poisonous_consumed": total_poisonous,
+        "discrimination_score": disc_score,
+    }, step=chunk * CHUNK)
+
     if chunk % 10 == 0:
-        print(f"Step {chunk * CHUNK}/{STEPS} — population: {n_alive[-1]}")
+        print(f"Step {chunk * CHUNK}/{STEPS} — population: {n_alive[-1]}  disc: {disc_score:.3f}")
 
 wandb.finish()
 print("Done.")
