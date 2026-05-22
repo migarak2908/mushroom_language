@@ -1,27 +1,103 @@
 from mushroom_world import MushroomWorld
 import jax.numpy as jnp
 import jax
+import equinox as eqx
+import numpy as np
+import wandb
 
 SEED = 0
 SX = 100
 SY = 100
-NB_AGENTS = 1000
+NB_AGENTS = 2000
+MAX_AGENTS = 3000
 NB_MUSHROOMS = 100
-STEPS = 100_000
-PERC_RADIUS = 4
+ENERGY_START = 200.0
+ENERGY_DECAY = 0.5
+MUSHROOM_NUTRITION = 20.0
+REPROD_THRESHOLD = 250.
+REPROD_COST = 30.
+PERC_RADIUS = 20
+STEPS = 10_000
+CHUNK = 100
 
 key = jax.random.key(SEED)
+env = MushroomWorld(SEED, SX, SY, NB_AGENTS, MAX_AGENTS, NB_MUSHROOMS, ENERGY_START, ENERGY_DECAY, MUSHROOM_NUTRITION, REPROD_THRESHOLD, REPROD_COST)
+agents, mushrooms = env.reset_fn()
 
-env = MushroomWorld(SEED, SX, SY, NB_AGENTS, NB_MUSHROOMS)
+dynamic_agents, static_agents = eqx.partition(agents, eqx.is_array)
 
-
-agents, mushrooms = env._reset_fn()
 
 def step(carry, _):
-    key, agents, mushrooms = carry
-    key, subkey = jax.random.split(key)
-    agents, mushrooms = env._step_fn(subkey, agents, mushrooms, PERC_RADIUS)
-    return (key, agents, mushrooms), None
+    key, dynamic_agents, mushrooms = carry
+    agents = eqx.combine(dynamic_agents, static_agents)
 
-(key, agents, mushrooms), _ = jax.lax.scan(step, (key, agents, mushrooms), None, length=STEPS)
+    key, subkey1, subkey2, subkey3 = jax.random.split(key, 4)
 
+    alive_before = agents.alive.sum()
+
+    obs = env._compute_obs(subkey1, agents, mushrooms, PERC_RADIUS)
+    probs = eqx.filter_vmap(lambda n, o: n(o))(agents.network, obs)
+    actions = jax.random.bernoulli(subkey2, probs).astype(jnp.int32)
+
+    agents, mushrooms = env._compute_update(actions, agents, mushrooms)
+    alive_post_update = agents.alive.sum()
+
+    agents = env._compute_reproduce(subkey3, agents)
+    alive_post_reproduce = agents.alive.sum()
+
+    deaths = alive_before - alive_post_update
+    births = alive_post_reproduce - alive_post_update
+    n_alive = alive_post_reproduce
+    mean_energy = jnp.where(n_alive > 0, (agents.energy * agents.alive).sum() / n_alive, 0.0)
+
+    alive_mask = agents.alive.astype(bool)
+    signal_dist = jnp.array([((agents.last_signal == i) & alive_mask).sum() for i in range(9)])
+
+    dynamic_agents, _ = eqx.partition(agents, eqx.is_array)
+    return (key, dynamic_agents, mushrooms), (n_alive, mean_energy, births, deaths, signal_dist)
+
+
+@eqx.filter_jit
+def run_chunk(key, dynamic_agents, mushrooms):
+    return jax.lax.scan(step, (key, dynamic_agents, mushrooms), None, length=CHUNK)
+
+
+wandb.init(
+    project="mushroom-language",
+    config=dict(
+        seed=SEED, grid_x=SX, grid_y=SY, nb_agents=NB_AGENTS, max_agents=MAX_AGENTS,
+        nb_mushrooms=NB_MUSHROOMS, energy_start=ENERGY_START, energy_decay=ENERGY_DECAY,
+        mushroom_nutrition=MUSHROOM_NUTRITION, reprod_threshold=REPROD_THRESHOLD,
+        reprod_cost=REPROD_COST, perc_radius=PERC_RADIUS, steps=STEPS,
+    )
+)
+
+signal_labels = [f"signal_{i}" for i in range(8)] + ["signal_silent"]
+
+print("Running simulation...")
+for chunk in range(STEPS // CHUNK):
+    (key, dynamic_agents, mushrooms), (n_alive, mean_energy, births, deaths, signal_dist) = run_chunk(key, dynamic_agents, mushrooms)
+
+    n_alive = np.array(n_alive)
+    mean_energy = np.array(mean_energy)
+    births = np.array(births)
+    deaths = np.array(deaths)
+    signal_dist = np.array(signal_dist)
+
+    for i in range(CHUNK):
+        global_step = chunk * CHUNK + i
+        log = {
+            "population": int(n_alive[i]),
+            "mean_energy": float(mean_energy[i]),
+            "births": int(births[i]),
+            "deaths": int(deaths[i]),
+        }
+        for j, label in enumerate(signal_labels):
+            log[label] = int(signal_dist[i, j])
+        wandb.log(log, step=global_step)
+
+    if chunk % 10 == 0:
+        print(f"Step {chunk * CHUNK}/{STEPS} — population: {n_alive[-1]}")
+
+wandb.finish()
+print("Done.")

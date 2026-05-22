@@ -9,15 +9,23 @@ SEED = 0
 SX = 100
 SY = 100
 NB_AGENTS = 2000
+MAX_AGENTS = 3000
 NB_MUSHROOMS = 100
-PERC_RADIUS = 4
+ENERGY_START = 200.0
+ENERGY_DECAY = 0.1
+MUSHROOM_NUTRITION = 20.0
+REPROD_THRESHOLD = 220.
+REPROD_COST = 0.
+PERC_RADIUS = 20
 INTERVAL = 50  # ms between frames
 
-key = jax.random.key(SEED)
-env = MushroomWorld(SEED, SX, SY, NB_AGENTS, NB_MUSHROOMS)
-agents, mushrooms = env._reset_fn()
 
-step_fn = eqx.filter_jit(env._step_fn)
+
+key = jax.random.key(SEED)
+env = MushroomWorld(SEED, SX, SY, NB_AGENTS, MAX_AGENTS, NB_MUSHROOMS, ENERGY_START, ENERGY_DECAY, MUSHROOM_NUTRITION, REPROD_THRESHOLD, REPROD_COST)
+agents, mushrooms = env.reset_fn()
+
+step_fn = eqx.filter_jit(env.step_fn)
 
 fig, ax = plt.subplots(figsize=(7, 7))
 
@@ -39,7 +47,8 @@ def update(_):
     mush_scatter.set_cmap('RdYlGn')
     mush_scatter.set_clim(0, 1)
 
-    agent_scatter.set_offsets(np.column_stack([np.array(agents.posx), np.array(agents.posy)]))
+    alive_mask = np.array(agents.alive, dtype=bool)
+    agent_scatter.set_offsets(np.column_stack([np.array(agents.posx)[alive_mask], np.array(agents.posy)[alive_mask]]))
 
     return mush_scatter, agent_scatter
 

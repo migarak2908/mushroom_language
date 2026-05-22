@@ -23,12 +23,12 @@ mushroom_prototype = jnp.array([
 ])
 
 bit_change = jnp.eye(10, dtype=jnp.int32)
-FEATURES = mushroom_prototype[:, None, :] ^ bit_change[None, :, :]
-FEATURES = jnp.reshape(FEATURES, (-1, 10))
-FEATURES = jnp.concat([FEATURES, jnp.full((1, 10), 0.5)])
+MUSH_LIBRARY = mushroom_prototype[:, None, :] ^ bit_change[None, :, :]
+MUSH_LIBRARY = jnp.reshape(MUSH_LIBRARY, (-1, 10))
+MUSH_LIBRARY = jnp.concat([MUSH_LIBRARY, jnp.full((1, 10), 0.5)])
 
 # Position updates based on direction
-TURN = jnp.array([0, -1, 1, 0])
+TURN = jnp.array([0, 1, -1, 0])
 MOVE = jnp.array([0, 0, 0, 1])
 DX = jnp.array([0, 1, 0, -1])
 DY = jnp.array([1, 0, -1, 0])
@@ -37,6 +37,7 @@ DY = jnp.array([1, 0, -1, 0])
 class Agents(eqx.Module):
     posx: jnp.ndarray
     posy: jnp.ndarray
+    alive: jnp.ndarray
     direction: jnp.ndarray
     last_signal: jnp.ndarray
     network: Network
@@ -55,32 +56,42 @@ class MushroomWorld(eqx.Module):
     grid_x: int
     grid_y: int
     nb_agents: int
+    max_agents: int
     nb_mushrooms: int
-    energy_start: int
+    energy_start: float
+    energy_decay: float
+    mushroom_nutrition: float
+    reprod_threshold: float
+    reprod_cost: float
 
 
-    def _reset_fn(self):
+    def reset_fn(self):
 
         SX = self.grid_x
         SY = self.grid_y
         nb_agents = self.nb_agents
+        max_agents = self.max_agents
 
         # set key
         key = jax.random.key(self.seed)
 
+        # initialise live agents
+        agent_idx = jnp.arange(max_agents)
+        alive = jnp.where(agent_idx <= nb_agents, 1, 0)
+
         # initialise agent positions
         key, subkey = jax.random.split(key)
         all_cells = jnp.arange(SX * SY)
-        chosen = jax.random.choice(subkey, all_cells, shape=(nb_agents,), replace=False)
+        chosen = jax.random.choice(subkey, all_cells, shape=(max_agents,), replace=False)
         posx = chosen // SY
         posy = chosen % SY
 
         # initialise agent directions and empty signal
         key, subkey = jax.random.split(key)
-        direction = jax.random.randint(subkey, shape=(nb_agents,), minval=0, maxval=4)
-        signal = jnp.zeros(nb_agents, dtype=jnp.int32)
+        direction = jax.random.randint(subkey, shape=(max_agents,), minval=0, maxval=4)
+        signal = jnp.full(max_agents, 8, dtype=jnp.int32)
 
-        energy = jnp.full(nb_agents, self.energy_start)
+        energy = jnp.where(alive, self.energy_start, 0)
 
         # initialise mushroom positions, type and features
         num_mushroom = self.nb_mushrooms
@@ -90,21 +101,22 @@ class MushroomWorld(eqx.Module):
         mushroom_posx = mush_chosen // SY
         mushroom_posy = mush_chosen % SY
 
-        mushroom_type = jnp.where(jnp.arange(num_mushroom) < num_mushroom // 2, 0, 1)
+        mushroom_type = jnp.where(jnp.arange(num_mushroom) < num_mushroom // 2, -1, 1)
 
         key, subkey1, subkey2 = jax.random.split(key, 3)
-        mushroom_features = jnp.where(mushroom_type,
+        mushroom_features = jnp.where(mushroom_type==1,
                                       jax.random.randint(subkey1, shape=(num_mushroom,), minval=10, maxval=20),
                                       jax.random.randint(subkey2, shape=(num_mushroom,), minval=0, maxval=10))
 
+
         # initialise agent params
         key, subkey = jax.random.split(key)
-        keys = jax.random.split(subkey, nb_agents)
+        keys = jax.random.split(subkey, max_agents)
         network = eqx.filter_vmap(lambda k: Network(k, input_dim=15, h_size=5, output_dim=5))(keys)
 
         # create agents and mushrooms data structure
-        agents = Agents(posx=posx, posy=posy, direction=direction, last_signal=signal, network=network, energy=energy)
-        mushrooms = Mushrooms(posx=mushroom_posx, posy=mushroom_posy, type=mushroom_type, features=mushroom_features)
+        agents = Agents(posx=posx, posy=posy, alive=alive, direction=direction, last_signal=signal, network=network, energy=energy)
+        mushrooms = Mushrooms(posx=mushroom_posx, posy=mushroom_posy, type=mushroom_type, features=mushroom_features )
 
         return (agents, mushrooms)
 
@@ -134,12 +146,12 @@ class MushroomWorld(eqx.Module):
         nearest_mush = jnp.argmin(distance_sq, axis=1)
 
         # find input direction for nearest mushrooms per agent
-        input_cos = cos_dir[jnp.arange(self.nb_agents), nearest_mush]
-        input_sin = sin_dir[jnp.arange(self.nb_agents), nearest_mush]
+        input_cos = cos_dir[jnp.arange(self.max_agents), nearest_mush]
+        input_sin = sin_dir[jnp.arange(self.max_agents), nearest_mush]
 
         # if the agent within perc_radius of nearest mushroom, receive mushroom's perceptual features
 
-        dist_to_mush = distance[jnp.arange(self.nb_agents), nearest_mush]
+        dist_to_mush = distance[jnp.arange(self.max_agents), nearest_mush]
         features = jnp.where(dist_to_mush <= perc_radius, mushrooms.features[nearest_mush], 20)
 
         # obtain signals produced in last step
@@ -155,17 +167,18 @@ class MushroomWorld(eqx.Module):
         backup_at_mush = backup_agent_per_mush[nearest_mush]
 
         # for each agent if the agent closest to its nearest mushroom is itself, use the second-nearest
-        agents_idx = jnp.arange(self.nb_agents)
+        agents_idx = jnp.arange(self.max_agents)
         use_backup = (agents_idx == agent_at_mush)
 
         signalling_agents = jnp.where(use_backup, backup_at_mush, agent_at_mush)
 
         # only take signals from agents within the perception radius of the nearest mushroom
         signalling_dist = distance[signalling_agents, nearest_mush]
-        signals = jnp.where(signalling_dist <= perc_radius, last_signal[signalling_agents], 8)
+        signalling_alive = agents.alive[signalling_agents]
+        signals = jnp.where((signalling_dist <= perc_radius) & signalling_alive, last_signal[signalling_agents], 8)
 
         signals = SIGNALS[signals]
-        features = FEATURES[features]
+        features = MUSH_LIBRARY[features]
 
         obs = jnp.concat([input_cos[:, None], input_sin[:, None], features, signals], axis=1)
 
@@ -184,34 +197,131 @@ class MushroomWorld(eqx.Module):
         turn = TURN[move_idx]
         move = MOVE[move_idx]
 
-        posx = (agents.posx + DX[agents.direction] * move) % self.grid_x
-        posy = (agents.posy + DY[agents.direction] * move) % self.grid_y
-        direction = (agents.direction + turn) % 4
+        new_posx = (agents.posx + DX[agents.direction] * move) % self.grid_x
+        new_posy = (agents.posy + DY[agents.direction] * move) % self.grid_y
+        new_direction = (agents.direction + turn) % 4
 
         # take agent signal bits and convert back to integer for storage
         signal_bits = actions[:, 2:]
-        last_signal = signal_bits[:, 0] * 4 + signal_bits[:, 1] * 2 + signal_bits[:, 2]
+        new_signal = signal_bits[:, 0] * 4 + signal_bits[:, 1] * 2 + signal_bits[:, 2]
 
-        # TODO - update agent energy based on mushroom consumption and decay
+        new_posx = jnp.where(agents.alive, new_posx, agents.posx)
+        new_posy = jnp.where(agents.alive, new_posy, agents.posy)
+        new_direction = jnp.where(agents.alive, new_direction, agents.direction)
+        new_signal = jnp.where(agents.alive, new_signal, agents.last_signal)
+
+        # update agents' energy based on mushroom consumption and standard decay
+        mush_posx = mushrooms.posx
+        mush_posy = mushrooms.posy
+
+        same_x = (new_posx[:, None] == mush_posx[None, :])
+        same_y = (new_posy[:, None] == mush_posy[None, :])
+
+        consume_mushroom = (same_x & same_y)
+
+        mushroom_type = mushrooms.type
+
+        consume_multiplier = (consume_mushroom * mushroom_type).sum(axis=1)
+        energy_change = (consume_multiplier * self.mushroom_nutrition) - self.energy_decay
+
+        energy = jnp.where(agents.alive, agents.energy + energy_change, 0.0)
+
+        alive = jnp.where(energy > 0, 1, 0)
+
 
         # update agents
-        agents = Agents(posx=posx, posy=posy, direction=direction, last_signal=last_signal, network=agents.network)
+        agents = Agents(posx=new_posx, posy=new_posy, alive=alive, direction=new_direction, last_signal=new_signal, network=agents.network, energy=energy)
 
         return agents, mushrooms
 
-    def _step_fn(self, key, agents, mushrooms, perc_radius):
+    def _compute_reproduce(self, key, agents):
 
-        key, subkey = jax.random.split(key)
+        # identify reproducers and empty slots for newborns to take
+        reproducers = (agents.energy > self.reprod_threshold)
+        dead_slots = (~agents.alive).astype(bool)
+
+        # rank reproducers by energy i.e. highest energy reproducers have priority
+        parents_energy = jnp.where(reproducers, agents.energy, -jnp.inf)
+        parent_ranking = jnp.argsort(-parents_energy)
+
+        # send empty slot indices to front (to align with parent ranking)
+        dead_slots_sorted = jnp.argsort(~dead_slots)
+
+        # find the minimum out of the number of empty slots and the number of viable reproducers
+        n_pairs = jnp.minimum(reproducers.sum(), dead_slots.sum())
+        active_slots = (jnp.arange(self.max_agents) < n_pairs)
+
+        # determine which slots will take on a newborn and identify the parent idx for that newborn
+        newborn = jnp.zeros(self.max_agents, dtype=bool)
+        newborn = newborn.at[dead_slots_sorted].set(active_slots)
+
+        parent_idx = jnp.zeros(self.max_agents, dtype=jnp.int32)
+        parent_idx = parent_idx.at[dead_slots_sorted].set(parent_ranking)
+
+        # partition the array (e.g. weights and bias) and non-array (e.g. activation funcs.) of the networks for mutation
+        params, static = eqx.partition(agents.network, eqx.is_inexact_array)
+
+        # flatten networks' pytree structures and prepare keys
+        leaves, treedef = jax.tree_util.tree_flatten(params)
+        keys = jax.random.split(key, len(leaves)+1)
+        mutation_keys, dir_key = keys[:-1], keys[-1]
+
+        # function takes key and network array batches and applies mutation, where newborn
+        def mutate_leaves(mutation_key, leaf):
+            parent_values = leaf[parent_idx]
+            noise = 0.02 * jax.random.normal(mutation_key, parent_values.shape)
+            newborn_values = parent_values + noise
+            newborn_mask = newborn.reshape((-1,) + (1,) * (leaf.ndim - 1))
+
+            return jnp.where(newborn_mask, newborn_values, leaf)
+
+        # apply function and rebuild trees to obtain new networks for newborns
+        new_leaves = [mutate_leaves(k, leaf) for k, leaf in zip(mutation_keys, leaves)]
+        new_params = jax.tree_util.tree_unflatten(treedef, new_leaves)
+        new_network = eqx.combine(new_params, static)
+
+        # determine new attributes
+        child_posx = agents.posx[parent_idx]
+        child_posy = agents.posy[parent_idx]
+        child_dir = jax.random.randint(dir_key, (self.max_agents,), minval=0, maxval=4)
+
+        parent_energy = agents.energy - self.reprod_cost
+        child_energy = self.energy_start
+
+        new_posx = jnp.where(newborn, child_posx, agents.posx)
+        new_posy = jnp.where(newborn, child_posy, agents.posy)
+        new_alive = jnp.where(newborn, 1, agents.alive)
+        new_dir = jnp.where(newborn, child_dir, agents.direction)
+        new_signal = jnp.where(newborn, 8, agents.last_signal)
+        new_energy = jnp.where(newborn, child_energy, agents.energy)
+
+        became_parent = jnp.zeros(self.max_agents, dtype=bool)
+        became_parent = became_parent.at[parent_ranking].set(active_slots)
+        new_energy = jnp.where(became_parent, parent_energy, new_energy)
+
+        agents = Agents(posx=new_posx, posy=new_posy, alive=new_alive, direction=new_dir, last_signal=new_signal, network=new_network, energy=new_energy)
+
+        return agents
+
+
+    def step_fn(self, key, agents, mushrooms, perc_radius):
+
+        subkey1, subkey2, subkey3 = jax.random.split(key, 3)
 
         # obtain observations
-        obs = self._compute_obs(subkey, agents, mushrooms, perc_radius)
+        obs = self._compute_obs(subkey1, agents, mushrooms, perc_radius)
 
         # compute agent actions given observations
-        raw_actions = eqx.filter_vmap(lambda n, o: n(o))(agents.network, obs)
-        actions = jnp.round(raw_actions).astype(jnp.int32)
+        # raw_actions = eqx.filter_vmap(lambda n, o: n(o))(agents.network, obs)
+        # actions = jnp.round(raw_actions).astype(jnp.int32)
+        probs = eqx.filter_vmap(lambda n, o: n(o))(agents.network, obs)
+        actions = jax.random.bernoulli(subkey2, probs).astype(jnp.int32)
 
         # update agents and mushrooms given agent actions
         agents, mushrooms = self._compute_update(actions, agents, mushrooms)
+
+        # compute reproduction
+        agents = self._compute_reproduce(subkey3, agents)
 
 
         return (agents, mushrooms)
