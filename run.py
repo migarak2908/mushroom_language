@@ -31,7 +31,7 @@ def step(carry, _):
     key, dynamic_agents, mushrooms = carry
     agents = eqx.combine(dynamic_agents, static_agents)
 
-    key, subkey1, subkey2, subkey3 = jax.random.split(key, 4)
+    key, subkey1, subkey2, subkey3, subkey4 = jax.random.split(key, 5)
 
     alive_before = agents.alive.sum()
 
@@ -39,10 +39,10 @@ def step(carry, _):
     probs = eqx.filter_vmap(lambda n, o: n(o))(agents.network, obs)
     actions = jax.random.bernoulli(subkey2, probs).astype(jnp.int32)
 
-    agents, mushrooms = env._compute_update(actions, agents, mushrooms)
+    agents, mushrooms = env._compute_update(subkey3, actions, agents, mushrooms)
     alive_post_update = agents.alive.sum()
 
-    agents = env._compute_reproduce(subkey3, agents)
+    agents = env._compute_reproduce(subkey4, agents)
     alive_post_reproduce = agents.alive.sum()
 
     deaths = alive_before - alive_post_update

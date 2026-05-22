@@ -52,6 +52,7 @@ class Mushrooms(eqx.Module):
     posy: jnp.ndarray
     type: jnp.ndarray
     features: jnp.ndarray
+    shuffle_countdown: jnp.int32
 
 
 class MushroomWorld(eqx.Module):
@@ -66,6 +67,7 @@ class MushroomWorld(eqx.Module):
     mushroom_nutrition: float
     reprod_threshold: float
     reprod_cost: float
+    shuffle_period: int
 
 
     def reset_fn(self):
@@ -99,6 +101,11 @@ class MushroomWorld(eqx.Module):
         energy = jnp.where(alive, self.energy_start, 0)
         mush_cooldown = jnp.zeros((max_agents, num_mushroom))
 
+        # initialise agent params
+        key, subkey = jax.random.split(key)
+        keys = jax.random.split(subkey, max_agents)
+        network = eqx.filter_vmap(lambda k: Network(k, input_dim=15, h_size=5, output_dim=5))(keys)
+
         # initialise mushroom positions, type and features
 
         key, subkey = jax.random.split(key)
@@ -114,14 +121,13 @@ class MushroomWorld(eqx.Module):
                                       jax.random.randint(subkey2, shape=(num_mushroom,), minval=0, maxval=10))
 
 
-        # initialise agent params
-        key, subkey = jax.random.split(key)
-        keys = jax.random.split(subkey, max_agents)
-        network = eqx.filter_vmap(lambda k: Network(k, input_dim=15, h_size=5, output_dim=5))(keys)
+
+        shuffle_countdown = jnp.full((num_mushroom,), self.shuffle_period)
+
 
         # create agents and mushrooms data structure
         agents = Agents(posx=posx, posy=posy, alive=alive, direction=direction, last_signal=signal, network=network, energy=energy, mush_cooldown=mush_cooldown)
-        mushrooms = Mushrooms(posx=mushroom_posx, posy=mushroom_posy, type=mushroom_type, features=mushroom_features )
+        mushrooms = Mushrooms(posx=mushroom_posx, posy=mushroom_posy, type=mushroom_type, features=mushroom_features, shuffle_countdown=shuffle_countdown)
 
         return (agents, mushrooms)
 
@@ -194,7 +200,7 @@ class MushroomWorld(eqx.Module):
 
         return obs
 
-    def _compute_update(self, actions, agents, mushrooms):
+    def _compute_update(self, key, actions, agents, mushrooms):
 
         # update agent positions (00 = stay, 10 = turn left, 01 = turn right, 11 = move forward)
         movement = actions[:, :2]
@@ -243,9 +249,22 @@ class MushroomWorld(eqx.Module):
 
         alive = jnp.where(energy > 0, 1, 0)
 
+        key, subkey = jax.random.split(key)
+        all_cells = jnp.arange(self.grid_x * self.grid_y)
+        mush_chosen = jax.random.choice(subkey, all_cells, shape=(self.nb_mushrooms,), replace=False)
+        new_mush_posx = mush_chosen // self.grid_y
+        new_mush_posy = mush_chosen % self.grid_y
+        mush_posx = jnp.where(mushrooms.shuffle_countdown == 0, new_mush_posx, mush_posx)
+        mush_posy = jnp.where(mushrooms.shuffle_countdown == 0, new_mush_posy, mush_posy)
+
+        shuffle_countdown = jnp.where(mushrooms.shuffle_countdown == 0, self.shuffle_period,
+                                      mushrooms.shuffle_countdown - 1)
 
         # update agents
         agents = Agents(posx=new_posx, posy=new_posy, alive=alive, direction=new_direction, last_signal=new_signal, network=agents.network, energy=energy, mush_cooldown=cooldown)
+        mushrooms = Mushrooms(posx=mush_posx, posy=mush_posy, type=mushrooms.type, features=mushrooms.features,
+                              shuffle_countdown=shuffle_countdown)
+
 
         return agents, mushrooms
 
@@ -322,7 +341,7 @@ class MushroomWorld(eqx.Module):
 
     def step_fn(self, key, agents, mushrooms, perc_radius):
 
-        subkey1, subkey2, subkey3 = jax.random.split(key, 3)
+        subkey1, subkey2, subkey3, subkey4 = jax.random.split(key, 4)
 
         # obtain observations
         obs = self._compute_obs(subkey1, agents, mushrooms, perc_radius)
@@ -334,10 +353,10 @@ class MushroomWorld(eqx.Module):
         actions = jax.random.bernoulli(subkey2, probs).astype(jnp.int32)
 
         # update agents and mushrooms given agent actions
-        agents, mushrooms = self._compute_update(actions, agents, mushrooms)
+        agents, mushrooms = self._compute_update(subkey3, actions, agents, mushrooms)
 
         # compute reproduction
-        agents = self._compute_reproduce(subkey3, agents)
+        agents = self._compute_reproduce(subkey4, agents)
 
 
         return (agents, mushrooms)
