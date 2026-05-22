@@ -77,7 +77,7 @@ class MushroomWorld(eqx.Module):
 
         # initialise live agents
         agent_idx = jnp.arange(max_agents)
-        alive = jnp.where(agent_idx <= nb_agents, 1, 0)
+        alive = jnp.where(agent_idx < nb_agents, 1, 0)
 
         # initialise agent positions
         key, subkey = jax.random.split(key)
@@ -238,7 +238,7 @@ class MushroomWorld(eqx.Module):
 
         # identify reproducers and empty slots for newborns to take
         reproducers = (agents.energy > self.reprod_threshold)
-        dead_slots = (~agents.alive).astype(bool)
+        dead_slots = (agents.alive == 0)
 
         # rank reproducers by energy i.e. highest energy reproducers have priority
         parents_energy = jnp.where(reproducers, agents.energy, -jnp.inf)
