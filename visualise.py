@@ -9,14 +9,14 @@ SEED = 0
 SX = 100
 SY = 100
 NB_AGENTS = 2000
-MAX_AGENTS = 3000
+MAX_AGENTS = 5000
 NB_MUSHROOMS = 100
 ENERGY_START = 200.0
 ENERGY_DECAY = 0.1
 MUSHROOM_NUTRITION = 20.0
-REPROD_THRESHOLD = 220.
+REPROD_THRESHOLD = 210.
 REPROD_COST = 0.
-PERC_RADIUS = 20
+PERC_RADIUS = 10
 INTERVAL = 50  # ms between frames
 
 
@@ -37,8 +37,11 @@ ax.set_ylim(0, SY)
 ax.set_aspect('equal')
 
 
+step_count = 0
+prev_alive = NB_AGENTS
+
 def update(_):
-    global key, agents, mushrooms
+    global key, agents, mushrooms, step_count, prev_alive
     key, subkey = jax.random.split(key)
     agents, mushrooms = step_fn(subkey, agents, mushrooms, PERC_RADIUS)
 
@@ -49,6 +52,15 @@ def update(_):
 
     alive_mask = np.array(agents.alive, dtype=bool)
     agent_scatter.set_offsets(np.column_stack([np.array(agents.posx)[alive_mask], np.array(agents.posy)[alive_mask]]))
+
+    n_alive = int(alive_mask.sum())
+    mean_energy = float(np.array(agents.energy)[alive_mask].mean()) if n_alive > 0 else 0.0
+    net_change = n_alive - prev_alive
+
+    print(f"\rstep {step_count:>6}  |  pop {n_alive:>5}  |  energy {mean_energy:>8.1f}  |  net {net_change:>+5}", end="", flush=True)
+
+    step_count += 1
+    prev_alive = n_alive
 
     return mush_scatter, agent_scatter
 

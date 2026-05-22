@@ -1,6 +1,8 @@
 import jax
 import jax.numpy as jnp
 import equinox as eqx
+
+
 from agent import Network
 
 # Initialise a world that is a grid of size X, Y. Populate this grid with n agents at random locations.
@@ -42,6 +44,7 @@ class Agents(eqx.Module):
     last_signal: jnp.ndarray
     network: Network
     energy: jnp.ndarray
+    mush_cooldown: jnp.ndarray
 
 
 class Mushrooms(eqx.Module):
@@ -71,6 +74,7 @@ class MushroomWorld(eqx.Module):
         SY = self.grid_y
         nb_agents = self.nb_agents
         max_agents = self.max_agents
+        num_mushroom = self.nb_mushrooms
 
         # set key
         key = jax.random.key(self.seed)
@@ -91,10 +95,11 @@ class MushroomWorld(eqx.Module):
         direction = jax.random.randint(subkey, shape=(max_agents,), minval=0, maxval=4)
         signal = jnp.full(max_agents, 8, dtype=jnp.int32)
 
+        # initialise energy and empty mushroom cooldowns
         energy = jnp.where(alive, self.energy_start, 0)
+        mush_cooldown = jnp.zeros((max_agents, num_mushroom))
 
         # initialise mushroom positions, type and features
-        num_mushroom = self.nb_mushrooms
 
         key, subkey = jax.random.split(key)
         mush_chosen = jax.random.choice(subkey, all_cells, shape=(num_mushroom,), replace=False)
@@ -115,7 +120,7 @@ class MushroomWorld(eqx.Module):
         network = eqx.filter_vmap(lambda k: Network(k, input_dim=15, h_size=5, output_dim=5))(keys)
 
         # create agents and mushrooms data structure
-        agents = Agents(posx=posx, posy=posy, alive=alive, direction=direction, last_signal=signal, network=network, energy=energy)
+        agents = Agents(posx=posx, posy=posy, alive=alive, direction=direction, last_signal=signal, network=network, energy=energy, mush_cooldown=mush_cooldown)
         mushrooms = Mushrooms(posx=mushroom_posx, posy=mushroom_posy, type=mushroom_type, features=mushroom_features )
 
         return (agents, mushrooms)
@@ -135,6 +140,11 @@ class MushroomWorld(eqx.Module):
 
         distance_sq = x_diff ** 2 + y_diff ** 2
         distance_sq = distance_sq + jax.random.uniform(subkey, distance_sq.shape) * 1e-6
+
+        # mask out mushrooms on cooldown for agents
+        cooldown_mask = (agents.mush_cooldown > 0)
+        distance_sq = jnp.where(cooldown_mask, jnp.inf, distance_sq)
+
 
         # compute directions
         distance = jnp.sqrt(distance_sq + 1e-8)
@@ -216,8 +226,13 @@ class MushroomWorld(eqx.Module):
 
         same_x = (new_posx[:, None] == mush_posx[None, :])
         same_y = (new_posy[:, None] == mush_posy[None, :])
+        cooldown = agents.mush_cooldown
+        edible = (cooldown == 0)
 
-        consume_mushroom = (same_x & same_y)
+        consume_mushroom = (same_x & same_y & edible)
+
+        cooldown = jnp.maximum(cooldown - 1, 0)
+        cooldown = jnp.where(consume_mushroom, jnp.round((self.mushroom_nutrition/self.energy_decay)+1), cooldown)
 
         mushroom_type = mushrooms.type
 
@@ -230,7 +245,7 @@ class MushroomWorld(eqx.Module):
 
 
         # update agents
-        agents = Agents(posx=new_posx, posy=new_posy, alive=alive, direction=new_direction, last_signal=new_signal, network=agents.network, energy=energy)
+        agents = Agents(posx=new_posx, posy=new_posy, alive=alive, direction=new_direction, last_signal=new_signal, network=agents.network, energy=energy, mush_cooldown=cooldown)
 
         return agents, mushrooms
 
@@ -294,12 +309,13 @@ class MushroomWorld(eqx.Module):
         new_dir = jnp.where(newborn, child_dir, agents.direction)
         new_signal = jnp.where(newborn, 8, agents.last_signal)
         new_energy = jnp.where(newborn, child_energy, agents.energy)
+        new_cooldown = jnp.where(newborn[:, None], 0, agents.mush_cooldown)
 
         became_parent = jnp.zeros(self.max_agents, dtype=bool)
         became_parent = became_parent.at[parent_ranking].set(active_slots)
         new_energy = jnp.where(became_parent, parent_energy, new_energy)
 
-        agents = Agents(posx=new_posx, posy=new_posy, alive=new_alive, direction=new_dir, last_signal=new_signal, network=new_network, energy=new_energy)
+        agents = Agents(posx=new_posx, posy=new_posy, alive=new_alive, direction=new_dir, last_signal=new_signal, network=new_network, energy=new_energy, mush_cooldown=new_cooldown)
 
         return agents
 
