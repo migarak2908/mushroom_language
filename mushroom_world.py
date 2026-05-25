@@ -65,9 +65,11 @@ class MushroomWorld(eqx.Module):
     energy_start: float
     energy_decay: float
     mushroom_nutrition: float
+    poison_multiplier: int
     reprod_threshold: float
     reprod_cost: float
     shuffle_period: int
+    frozen_baseline: bool
 
 
     def reset_fn(self):
@@ -113,7 +115,7 @@ class MushroomWorld(eqx.Module):
         mushroom_posx = mush_chosen // SY
         mushroom_posy = mush_chosen % SY
 
-        mushroom_type = jnp.where(jnp.arange(num_mushroom) < num_mushroom // 2, -1, 1)
+        mushroom_type = jnp.where(jnp.arange(num_mushroom) < num_mushroom // 2, self.poison_multiplier, 1)
 
         key, subkey1, subkey2 = jax.random.split(key, 3)
         mushroom_features = jnp.where(mushroom_type==1,
@@ -235,7 +237,7 @@ class MushroomWorld(eqx.Module):
         cooldown = agents.mush_cooldown
         edible = (cooldown == 0)
 
-        consume_mushroom = (same_x & same_y & edible)
+        consume_mushroom = (same_x & same_y & edible & agents.alive[:, None].astype(bool))
 
         cooldown = jnp.maximum(cooldown - 1, 0)
         cooldown = jnp.where(consume_mushroom, jnp.round((self.mushroom_nutrition/self.energy_decay)+1), cooldown)
@@ -250,7 +252,7 @@ class MushroomWorld(eqx.Module):
         alive = jnp.where(energy > 0, 1, 0)
 
         edible_consumed = (consume_mushroom * (mushroom_type == 1)[None, :]).sum()
-        poisonous_consumed = (consume_mushroom * (mushroom_type == -1)[None, :]).sum()
+        poisonous_consumed = (consume_mushroom * (mushroom_type == self.poison_multiplier)[None, :]).sum()
 
         key, subkey = jax.random.split(key)
         all_cells = jnp.arange(self.grid_x * self.grid_y)
@@ -341,6 +343,52 @@ class MushroomWorld(eqx.Module):
 
         return agents
 
+    def _compute_respawn(self, key, agents):
+        SX = self.grid_x
+        SY = self.grid_y
+        max_agents = self.max_agents
+        num_mushroom = self.nb_mushrooms
+
+        key, subkey = jax.random.split(key)
+        all_cells = jnp.arange(SX * SY)
+        chosen = jax.random.choice(subkey, all_cells, shape=(max_agents,), replace=False)
+        posx = chosen // SY
+        posy = chosen % SY
+
+        # initialise agent directions and empty signal
+        key, subkey = jax.random.split(key)
+        direction = jax.random.randint(subkey, shape=(max_agents,), minval=0, maxval=4)
+        signal = jnp.full(max_agents, 8, dtype=jnp.int32)
+
+        # initialise energy and empty mushroom cooldowns
+        energy = jnp.full((max_agents,), self.energy_start)
+        mush_cooldown = jnp.zeros((max_agents, num_mushroom))
+
+        # initialise agent params
+        key, subkey = jax.random.split(key)
+        keys = jax.random.split(subkey, max_agents)
+        network = eqx.filter_vmap(lambda k: Network(k, input_dim=15, h_size=5, output_dim=5))(keys)
+
+        dead = (agents.alive == 0)
+        posx = jnp.where(dead, posx, agents.posx)
+        posy = jnp.where(dead, posy, agents.posy)
+        alive = jnp.where(dead, 1, agents.alive)
+        direction = jnp.where(dead, direction, agents.direction)
+        signal = jnp.where(dead, signal, agents.last_signal)
+        energy = jnp.where(dead, energy, agents.energy)
+        mush_cooldown = jnp.where(dead[:, None], mush_cooldown, agents.mush_cooldown)
+
+        params_new, static_new = eqx.partition(network, eqx.is_inexact_array)
+        params_old, _ = eqx.partition(agents.network, eqx.is_inexact_array)
+        merged_leaves = jax.tree_util.tree_map(
+            lambda n, o: jnp.where(dead.reshape((-1,) + (1,) * (n.ndim - 1)), n, o),
+            params_new,params_old)
+
+        new_network = eqx.combine(merged_leaves, static_new)
+
+        agents = Agents(posx=posx, posy=posy, alive=alive, direction=direction, last_signal=signal, network=new_network, energy=energy, mush_cooldown=mush_cooldown)
+
+        return agents
 
     def step_fn(self, key, agents, mushrooms, perc_radius):
 
@@ -358,8 +406,11 @@ class MushroomWorld(eqx.Module):
         # update agents and mushrooms given agent actions
         agents, mushrooms, _, _ = self._compute_update(subkey3, actions, agents, mushrooms)
 
-        # compute reproduction
-        agents = self._compute_reproduce(subkey4, agents)
+        # compute reproduction or respawn
+        if self.frozen_baseline:
+            agents = self._compute_respawn(subkey4, agents)
+        else:
+            agents = self._compute_reproduce(subkey4, agents)
 
 
         return (agents, mushrooms)
