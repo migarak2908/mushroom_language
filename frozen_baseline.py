@@ -14,6 +14,7 @@ NB_MUSHROOMS = 100
 ENERGY_START = 200.0
 ENERGY_DECAY = 0.1
 MUSHROOM_NUTRITION = 20.0
+POISON_MULTIPLIER = -4
 REPROD_THRESHOLD = 210.
 REPROD_COST = 0.
 PERC_RADIUS = 10
@@ -24,7 +25,7 @@ FROZEN_BASELINE = True
 SHUFFLE_PERIOD = 200
 
 key = jax.random.key(SEED)
-env = MushroomWorld(SEED, SX, SY, NB_AGENTS, MAX_AGENTS, NB_MUSHROOMS, ENERGY_START, ENERGY_DECAY, MUSHROOM_NUTRITION, REPROD_THRESHOLD, REPROD_COST, SHUFFLE_PERIOD, FROZEN_BASELINE)
+env = MushroomWorld(SEED, SX, SY, NB_AGENTS, MAX_AGENTS, NB_MUSHROOMS, ENERGY_START, ENERGY_DECAY, MUSHROOM_NUTRITION, POISON_MULTIPLIER, REPROD_THRESHOLD, REPROD_COST, SHUFFLE_PERIOD, FROZEN_BASELINE)
 agents, mushrooms = env.reset_fn()
 
 dynamic_agents, static_agents = eqx.partition(agents, eqx.is_array)
@@ -70,8 +71,8 @@ wandb.init(
     config=dict(
         seed=SEED, grid_x=SX, grid_y=SY, nb_agents=NB_AGENTS, max_agents=MAX_AGENTS,
         nb_mushrooms=NB_MUSHROOMS, energy_start=ENERGY_START, energy_decay=ENERGY_DECAY,
-        mushroom_nutrition=MUSHROOM_NUTRITION, reprod_threshold=REPROD_THRESHOLD,
-        reprod_cost=REPROD_COST, perc_radius=PERC_RADIUS, steps=STEPS,
+        mushroom_nutrition=MUSHROOM_NUTRITION, poison_multiplier=POISON_MULTIPLIER, reprod_threshold=REPROD_THRESHOLD,
+        reprod_cost=REPROD_COST, perc_radius=PERC_RADIUS, steps=STEPS, frozen_baseline=FROZEN_BASELINE
     )
 )
 
