@@ -1,6 +1,3 @@
-from google.colab import drive
-drive.mount('/content/drive')
-
 from mushroom_world import MushroomWorld
 import jax.numpy as jnp
 import jax
@@ -42,8 +39,8 @@ def generate_configs(n_configs, seed):
     for i, s in enumerate(samples):
         # s is in [0,1]^4, scale each dimension
         mutation_std = float(10 ** (np.log10(0.005) + s[0] * (np.log10(0.2) - np.log10(0.005))))  # log-uniform [0.005, 0.2]
-        poison_multiplier = float(-2 - s[1] * 18)  # uniform [-20, -2]
-        reprod_cost = float(s[2] * 100)  # uniform [0, 100]
+        poison_multiplier = float(-2 - s[1] * 6)  # uniform [-8, -2]
+        reprod_cost = float(s[2] * 50)  # uniform [0, 50]
         energy_decay = float(0.05 + s[3] * 0.25)  # uniform [0.05, 0.3]
 
         configs.append({
@@ -87,8 +84,7 @@ def run_one(cfg, seed):
         actions = jax.random.bernoulli(sk2, probs).astype(jnp.int32)
 
         agents, mushrooms, edible, poisonous = env._compute_update(sk3, actions, agents, mushrooms)
-        mutation_std = env.mutation_std
-        agents = env._compute_reproduce(sk4, agents, mutation_std)
+        agents = env._compute_reproduce(sk4, agents, env.mutation_std)
 
         n_alive = agents.alive.sum()
         mean_energy = jnp.where(n_alive > 0, (agents.energy * agents.alive).sum() / n_alive, 0.0)
@@ -101,9 +97,11 @@ def run_one(cfg, seed):
         return jax.lax.scan(step, (key, dynamic_agents, mushrooms), None, length=CHUNK)
 
     chunk_edible, chunk_poisonous, chunk_disc, chunk_alive, chunk_energy = [], [], [], [], []
+    extinction_chunk = None
 
     for c in range(STEPS // CHUNK):
         (key, dynamic_agents, mushrooms), (n_alive, mean_energy, edible, poisonous) = run_chunk(key, dynamic_agents, mushrooms)
+
         total_e = int(np.array(edible).sum())
         total_p = int(np.array(poisonous).sum())
         total = total_e + total_p
@@ -115,6 +113,12 @@ def run_one(cfg, seed):
         chunk_alive.append(float(np.array(n_alive).mean()))
         chunk_energy.append(float(np.array(mean_energy).mean()))
 
+        # Strict-zero extinction check: alive at end of chunk
+        if int(np.array(n_alive)[-1]) == 0:
+            extinction_chunk = c
+            print(f"  extinction at chunk {c}")
+            break
+
     return {
         "config": cfg,
         "seed": seed,
@@ -123,6 +127,8 @@ def run_one(cfg, seed):
         "chunk_disc": chunk_disc,
         "chunk_alive": chunk_alive,
         "chunk_energy": chunk_energy,
+        "extinction_chunk": extinction_chunk,
+        "completed_chunks": len(chunk_disc),
     }
 
 
