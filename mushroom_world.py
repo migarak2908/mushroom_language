@@ -68,6 +68,7 @@ class MushroomWorld(eqx.Module):
     poison_multiplier: int
     reprod_threshold: float
     reprod_cost: float
+    mutation_std: float
     shuffle_period: int
     frozen_baseline: bool
 
@@ -273,7 +274,7 @@ class MushroomWorld(eqx.Module):
 
         return agents, mushrooms, edible_consumed, poisonous_consumed
 
-    def _compute_reproduce(self, key, agents):
+    def _compute_reproduce(self, key, agents, mutation_std):
 
         # identify reproducers and empty slots for newborns to take
         reproducers = (agents.energy > self.reprod_threshold)
@@ -308,7 +309,7 @@ class MushroomWorld(eqx.Module):
         # function takes key and network array batches and applies mutation, where newborn
         def mutate_leaves(mutation_key, leaf):
             parent_values = leaf[parent_idx]
-            noise = 0.02 * jax.random.normal(mutation_key, parent_values.shape)
+            noise = mutation_std * jax.random.normal(mutation_key, parent_values.shape)
             newborn_values = parent_values + noise
             newborn_mask = newborn.reshape((-1,) + (1,) * (leaf.ndim - 1))
 
@@ -410,7 +411,8 @@ class MushroomWorld(eqx.Module):
         if self.frozen_baseline:
             agents = self._compute_respawn(subkey4, agents)
         else:
-            agents = self._compute_reproduce(subkey4, agents)
+            mutation_std = self.mutation_std
+            agents = self._compute_reproduce(subkey4, agents, mutation_std)
 
 
         return (agents, mushrooms)
