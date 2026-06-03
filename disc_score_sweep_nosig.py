@@ -41,8 +41,8 @@ def generate_configs(n_configs, seed):
         # s is in [0,1]^4, scale each dimension
         mutation_std = float(10 ** (np.log10(0.005) + s[0] * (np.log10(0.2) - np.log10(0.005))))  # log-uniform [0.005, 0.2]
         poison_multiplier = float(-2 - s[1] * 6)  # uniform [-8, -2]
-        reprod_cost = float(s[2] * 50)  # uniform [0, 50]
-        energy_decay = float(0.05 + s[3] * 0.25)  # uniform [0.05, 0.3]
+        reprod_cost = float(s[2] * 25)  # uniform [0, 25]
+        energy_decay = float(0.05 + s[3] * 0.20)  # uniform [0.05, 0.25]
 
         configs.append({
             "config_id": i,
