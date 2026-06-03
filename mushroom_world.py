@@ -71,6 +71,7 @@ class MushroomWorld(eqx.Module):
     mutation_std: float
     shuffle_period: int
     frozen_baseline: bool
+    no_signal: bool
 
 
     def reset_fn(self):
@@ -172,32 +173,38 @@ class MushroomWorld(eqx.Module):
 
         dist_to_mush = distance[jnp.arange(self.max_agents), nearest_mush]
         features = jnp.where(dist_to_mush <= perc_radius, mushrooms.features[nearest_mush], 20)
+        features = MUSH_LIBRARY[features]
 
         # obtain signals produced in last step
-        last_signal = agents.last_signal
+        if self.no_signal:
+            signals = jnp.full((self.max_agents, 3), SIGNALS[-1])
 
-        # find the 2 agents closest to each mushroom
-        closest_agents = jnp.argsort(distance, axis=0)[:2]
-        nearest_agent_per_mush = closest_agents[0, :]
-        backup_agent_per_mush = closest_agents[1, :]
+        else:
+            last_signal = agents.last_signal
 
-        # for each agent find the agent closest to its nearest mushroom and second closest
-        agent_at_mush = nearest_agent_per_mush[nearest_mush]
-        backup_at_mush = backup_agent_per_mush[nearest_mush]
+            # find the 2 agents closest to each mushroom
+            closest_agents = jnp.argsort(distance, axis=0)[:2]
+            nearest_agent_per_mush = closest_agents[0, :]
+            backup_agent_per_mush = closest_agents[1, :]
 
-        # for each agent if the agent closest to its nearest mushroom is itself, use the second-nearest
-        agents_idx = jnp.arange(self.max_agents)
-        use_backup = (agents_idx == agent_at_mush)
+            # for each agent find the agent closest to its nearest mushroom and second closest
+            agent_at_mush = nearest_agent_per_mush[nearest_mush]
+            backup_at_mush = backup_agent_per_mush[nearest_mush]
 
-        signalling_agents = jnp.where(use_backup, backup_at_mush, agent_at_mush)
+            # for each agent if the agent closest to its nearest mushroom is itself, use the second-nearest
+            agents_idx = jnp.arange(self.max_agents)
+            use_backup = (agents_idx == agent_at_mush)
 
-        # only take signals from agents within the perception radius of the nearest mushroom
-        signalling_dist = distance[signalling_agents, nearest_mush]
-        signalling_alive = agents.alive[signalling_agents]
-        signals = jnp.where((signalling_dist <= perc_radius) & signalling_alive, last_signal[signalling_agents], 8)
+            signalling_agents = jnp.where(use_backup, backup_at_mush, agent_at_mush)
 
-        signals = SIGNALS[signals]
-        features = MUSH_LIBRARY[features]
+            # only take signals from agents within the perception radius of the nearest mushroom
+            signalling_dist = distance[signalling_agents, nearest_mush]
+            signalling_alive = agents.alive[signalling_agents]
+            signals = jnp.where((signalling_dist <= perc_radius) & signalling_alive, last_signal[signalling_agents], 8)
+
+            signals = SIGNALS[signals]
+
+
 
         obs = jnp.concat([input_cos[:, None], input_sin[:, None], features, signals], axis=1)
 
