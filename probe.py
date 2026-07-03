@@ -15,10 +15,6 @@ PROBE_STEPS = 40
 PERC_RADIUS = 10
 MAX_AGENTS = 5000
 
-AGENTS_DIR = "/content/drive/MyDrive/saved_agents_nosig"
-RESULTS_DIR = "/content/drive/MyDrive/probe_results_nosig"
-os.makedirs(RESULTS_DIR, exist_ok=True)
-
 NEUTRAL_SIGNAL = SIGNALS[-1]  # [0.5, 0.5, 0.5] — matches no_signal training condition
 
 
@@ -114,35 +110,40 @@ def load_networks(agents_path, alive_path):
     return networks, alive
 
 
-# Run probe on all saved agent files
-for fname in sorted(os.listdir(AGENTS_DIR)):
-    if not fname.endswith("_agents.eqx"):
-        continue
+if __name__ == "__main__":
+    AGENTS_DIR = "/content/drive/MyDrive/saved_agents_nosig"
+    RESULTS_DIR = "/content/drive/MyDrive/probe_results_nosig"
+    os.makedirs(RESULTS_DIR, exist_ok=True)
 
-    base = fname.replace("_agents.eqx", "")
-    alive_path   = os.path.join(AGENTS_DIR, f"{base}_alive.npy")
-    out_path     = os.path.join(RESULTS_DIR, f"{base}_probe.json")
+    # Run probe on all saved agent files
+    for fname in sorted(os.listdir(AGENTS_DIR)):
+        if not fname.endswith("_agents.eqx"):
+            continue
 
-    if os.path.exists(out_path):
-        continue
-    if not os.path.exists(alive_path):
-        print(f"Missing alive mask for {base}, skipping")
-        continue
+        base = fname.replace("_agents.eqx", "")
+        alive_path   = os.path.join(AGENTS_DIR, f"{base}_alive.npy")
+        out_path     = os.path.join(RESULTS_DIR, f"{base}_probe.json")
 
-    print(f"Probing {base}...")
-    networks, alive = load_networks(os.path.join(AGENTS_DIR, fname), alive_path)
+        if os.path.exists(out_path):
+            continue
+        if not os.path.exists(alive_path):
+            print(f"Missing alive mask for {base}, skipping")
+            continue
 
-    results = probe_population(networks)
+        print(f"Probing {base}...")
+        networks, alive = load_networks(os.path.join(AGENTS_DIR, fname), alive_path)
 
-    # Filter to alive agents only
-    out = {k: v[alive].tolist() for k, v in results.items()}
-    out["n_alive"] = int(alive.sum())
-    out["mean_approach_disc"] = float(np.mean(results["approach_disc"][alive]))
-    out["mean_eat_disc"]      = float(np.mean(results["eat_disc"][alive]))
+        results = probe_population(networks)
 
-    with open(out_path, "w") as f:
-        json.dump(out, f)
+        # Filter to alive agents only
+        out = {k: v[alive].tolist() for k, v in results.items()}
+        out["n_alive"] = int(alive.sum())
+        out["mean_approach_disc"] = float(np.mean(results["approach_disc"][alive]))
+        out["mean_eat_disc"]      = float(np.mean(results["eat_disc"][alive]))
 
-    print(f"  n_alive={out['n_alive']}  approach_disc={out['mean_approach_disc']:.3f}  eat_disc={out['mean_eat_disc']:.3f}")
+        with open(out_path, "w") as f:
+            json.dump(out, f)
 
-print("Done.")
+        print(f"  n_alive={out['n_alive']}  approach_disc={out['mean_approach_disc']:.3f}  eat_disc={out['mean_eat_disc']:.3f}")
+
+    print("Done.")
