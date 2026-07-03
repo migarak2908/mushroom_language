@@ -36,7 +36,9 @@ PROBE_KEYS = (
 )
 
 RESULTS_DIR = f"/content/drive/MyDrive/mushroom_sweep_probed{'_nosig' if NO_SIGNAL else ''}"
+AGENTS_DIR = f"/content/drive/MyDrive/mushroom_sweep_probed_agents{'_nosig' if NO_SIGNAL else ''}"
 os.makedirs(RESULTS_DIR, exist_ok=True)
+os.makedirs(AGENTS_DIR, exist_ok=True)
 
 
 # Generate LHS configs
@@ -49,8 +51,8 @@ def generate_configs(n_configs, seed):
         # s is in [0,1]^4, scale each dimension
         mutation_std = float(10 ** (np.log10(0.005) + s[0] * (np.log10(0.2) - np.log10(0.005))))  # log-uniform [0.005, 0.2]
         poison_multiplier = float(-2 - s[1] * 6)  # uniform [-8, -2]
-        reprod_cost = float(s[2] * 25)  # uniform [0, 25]
-        energy_decay = float(0.05 + s[3] * 0.20)  # uniform [0.05, 0.25]
+        reprod_cost = float(s[2] * 12)  # was * 25  → [0, 12]
+        energy_decay = float(0.05 + s[3] * 0.10)  # was * 0.20 → [0.05, 0.15]
 
         configs.append({
             "config_id": i,
@@ -157,7 +159,9 @@ def run_one(cfg, seed):
             print(f"  extinction at chunk {c}")
             break
 
-    return {
+    final_agents = eqx.combine(dynamic_agents, static_agents)
+
+    result = {
         "config": cfg,
         "seed": seed,
         "chunk_edible": chunk_edible,
@@ -171,6 +175,7 @@ def run_one(cfg, seed):
         "probe_n_alive": probe_n_alive,
         **{f"probe_{k}": v for k, v in probe_series.items()},
     }
+    return result, final_agents
 
 
 # Main sweep
@@ -195,12 +200,17 @@ for cfg in configs:
               f"mut={cfg['mutation_std']:.4f} poison={cfg['poison_multiplier']:.2f} "
               f"reprod={cfg['reprod_cost']:.1f} decay={cfg['energy_decay']:.3f}")
 
-        result = run_one(cfg, seed)
+        result, final_agents = run_one(cfg, seed)
 
         final_window = [d for d in result["chunk_disc"][int(len(result["chunk_disc"]) * 0.8):] if not np.isnan(d)]
         final_disc = np.mean(final_window) if final_window else float('nan')
         final_probe_disc = result["probe_approach_disc"][-1] if result["probe_approach_disc"] else float('nan')
         print(f"  -> final env discrimination: {final_disc:.4f}  final probe discrimination: {final_probe_disc:.4f}")
+
+        if result["extinction_chunk"] is None:
+            base = f"cfg{cfg['config_id']:03d}_{cfg_hash}_seed{seed}"
+            eqx.tree_serialise_leaves(os.path.join(AGENTS_DIR, f"{base}_agents.eqx"), final_agents.network)
+            np.save(os.path.join(AGENTS_DIR, f"{base}_alive.npy"), np.array(final_agents.alive))
 
         with open(out_path, "w") as f:
             json.dump(result, f)
