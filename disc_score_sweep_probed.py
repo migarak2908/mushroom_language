@@ -25,6 +25,8 @@ NO_SIGNAL = True          # flip to False to sweep the with-signal condition
 STEPS = 100_000
 CHUNK = 100
 PROBE_EVERY = 10          # chunks (1000 env steps) between isolation-probe evaluations
+PROBE_REPLICATES = 8      # stochastic rollouts per probe condition (cheap, for the in-sweep trace;
+                          # run a higher-replicate probe separately on the saved final agents for calibration)
 
 N_CONFIGS = 100
 N_SEEDS = 5
@@ -71,6 +73,7 @@ def config_hash(cfg):
 
 def run_one(cfg, seed):
     key = jax.random.key(seed)
+    probe_key = jax.random.key(seed + 1_000_003)  # independent stream so probing doesn't perturb the sim trajectory
     env = MushroomWorld(
         seed=seed, grid_x=SX, grid_y=SY,
         nb_agents=NB_AGENTS, max_agents=MAX_AGENTS, nb_mushrooms=NB_MUSHROOMS,
@@ -108,7 +111,7 @@ def run_one(cfg, seed):
     def run_chunk(key, dynamic_agents, mushrooms):
         return jax.lax.scan(step, (key, dynamic_agents, mushrooms), None, length=CHUNK)
 
-    def run_probe(dynamic_agents):
+    def run_probe(dynamic_agents, key):
         """Isolation-probe the live population: single agent, clean grid, neutral signal.
         Decouples discrimination ability from environment/social confounds."""
         agents = eqx.combine(dynamic_agents, static_agents)
@@ -118,7 +121,7 @@ def run_one(cfg, seed):
         if n_alive == 0:
             return n_alive, {k: float('nan') for k in PROBE_KEYS}
 
-        probe_result = probe_population(agents.network)
+        probe_result = probe_population(agents.network, key, n_replicates=PROBE_REPLICATES)
         summary = {k: float(np.mean(np.asarray(v)[alive_np])) for k, v in probe_result.items()}
         return n_alive, summary
 
@@ -148,7 +151,8 @@ def run_one(cfg, seed):
         is_last = (c == n_chunks - 1)
 
         if c % PROBE_EVERY == 0 or is_extinct or is_last:
-            n_alive_probe, probe_summary = run_probe(dynamic_agents)
+            probe_key, subkey = jax.random.split(probe_key)
+            n_alive_probe, probe_summary = run_probe(dynamic_agents, subkey)
             probe_chunks.append(c)
             probe_n_alive.append(n_alive_probe)
             for k, v in probe_summary.items():

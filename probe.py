@@ -4,8 +4,6 @@ import jax
 import jax.numpy as jnp
 import equinox as eqx
 import numpy as np
-import os
-import json
 
 PROBE_GRID = 20
 AGENT_X, AGENT_Y = 10, 10
@@ -14,12 +12,20 @@ INITIAL_DIST = float(MUSH_Y - AGENT_Y)
 PROBE_STEPS = 40
 PERC_RADIUS = 10
 MAX_AGENTS = 5000
+PROBE_REPLICATES = 8  # default stochastic rollouts per (agent, direction, feature) condition
 
 NEUTRAL_SIGNAL = SIGNALS[-1]  # [0.5, 0.5, 0.5] — matches no_signal training condition
 
 
-def run_probe_trial(network, direction, feature_idx):
-    """Single probe trial. Returns (approach_score, ate_any)."""
+def run_probe_trial(network, direction, feature_idx, key):
+    """Single stochastic probe trial. Returns (approach_score, ate_any).
+
+    Actions are sampled with jax.random.bernoulli, matching how the real
+    environment (mushroom_world.step_fn) selects actions from the network's
+    sigmoid outputs. Rounding to the nearest action instead would erase any
+    bias too weak to cross the 0.5 threshold, even though that same bias is
+    exactly what the environment's stochastic sampling picks up on at scale.
+    """
     px = jnp.array(AGENT_X, dtype=jnp.int32)
     py = jnp.array(AGENT_Y, dtype=jnp.int32)
     d  = jnp.array(direction, dtype=jnp.int32)
@@ -33,7 +39,8 @@ def run_probe_trial(network, direction, feature_idx):
         return jnp.sqrt((xd ** 2 + yd ** 2).astype(jnp.float32) + 1e-8), xd, yd
 
     def step(carry, _):
-        px, py, d = carry
+        px, py, d, key = carry
+        key, subkey = jax.random.split(key)
 
         dist, xd, yd = dist_to_mush(px, py)
         cos_ = xd.astype(jnp.float32) / dist
@@ -42,7 +49,7 @@ def run_probe_trial(network, direction, feature_idx):
         obs = jnp.concat([cos_[None], sin_[None], feat_obs, NEUTRAL_SIGNAL])
 
         probs = network(obs)
-        actions = jnp.round(probs).astype(jnp.int32)
+        actions = jax.random.bernoulli(subkey, probs).astype(jnp.int32)
 
         move_idx = 2 * actions[0] + actions[1]
         new_d  = (d + TURN[move_idx]) % 4
@@ -52,9 +59,9 @@ def run_probe_trial(network, direction, feature_idx):
         new_dist, _, _ = dist_to_mush(new_px, new_py)
         ate = (new_px == mx) & (new_py == my)
 
-        return (new_px, new_py, new_d), (new_dist, ate.astype(jnp.float32))
+        return (new_px, new_py, new_d, key), (new_dist, ate.astype(jnp.float32))
 
-    _, (distances, ates) = jax.lax.scan(step, (px, py, d), None, length=PROBE_STEPS)
+    _, (distances, ates) = jax.lax.scan(step, (px, py, d, key), None, length=PROBE_STEPS)
 
     approach_score = (INITIAL_DIST - jnp.min(distances)) / INITIAL_DIST
     ate_any = (ates.sum() > 0).astype(jnp.float32)
@@ -62,12 +69,20 @@ def run_probe_trial(network, direction, feature_idx):
 
 
 @eqx.filter_jit
-def run_trial_all_agents(networks, direction, feature_idx):
-    return eqx.filter_vmap(lambda n: run_probe_trial(n, direction, feature_idx))(networks)
+def run_trial_all_agents(networks, direction, feature_idx, keys):
+    """keys: shape (n_agents, n_replicates). Returns arrays of shape
+    (n_agents, n_replicates) — each agent's stochastic rollouts for this
+    (direction, feature_idx) condition."""
+    def per_agent(network, agent_keys):
+        return eqx.filter_vmap(lambda k: run_probe_trial(network, direction, feature_idx, k))(agent_keys)
+
+    return eqx.filter_vmap(per_agent)(networks, keys)
 
 
-def probe_population(networks):
-    """Run all trials for all agents. Returns arrays of shape (n_agents,)."""
+def probe_population(networks, key, n_replicates=PROBE_REPLICATES):
+    """Run all trials for all agents, averaging n_replicates stochastic
+    rollouts per condition. Returns arrays of shape (n_agents,)."""
+    n_agents = MAX_AGENTS
     edible_approach  = []
     edible_ate       = []
     poison_approach  = []
@@ -75,15 +90,19 @@ def probe_population(networks):
 
     for feat_idx in range(10, 20):       # edible variants
         for direction in range(4):
-            a, e = run_trial_all_agents(networks, direction, feat_idx)
-            edible_approach.append(np.array(a))
-            edible_ate.append(np.array(e))
+            key, subkey = jax.random.split(key)
+            keys = jax.random.split(subkey, n_agents * n_replicates).reshape(n_agents, n_replicates)
+            a, e = run_trial_all_agents(networks, direction, feat_idx, keys)
+            edible_approach.append(np.mean(np.array(a), axis=1))
+            edible_ate.append(np.mean(np.array(e), axis=1))
 
     for feat_idx in range(0, 10):        # poisonous variants
         for direction in range(4):
-            a, e = run_trial_all_agents(networks, direction, feat_idx)
-            poison_approach.append(np.array(a))
-            poison_ate.append(np.array(e))
+            key, subkey = jax.random.split(key)
+            keys = jax.random.split(subkey, n_agents * n_replicates).reshape(n_agents, n_replicates)
+            a, e = run_trial_all_agents(networks, direction, feat_idx, keys)
+            poison_approach.append(np.mean(np.array(a), axis=1))
+            poison_ate.append(np.mean(np.array(e), axis=1))
 
     edible_approach  = np.mean(edible_approach,  axis=0)   # (n_agents,)
     edible_ate       = np.mean(edible_ate,        axis=0)
@@ -108,42 +127,5 @@ def load_networks(agents_path, alive_path):
     )(dummy_keys)
     networks = eqx.tree_deserialise_leaves(agents_path, dummy_networks)
     return networks, alive
-
-
-if __name__ == "__main__":
-    AGENTS_DIR = "/content/drive/MyDrive/saved_agents_nosig"
-    RESULTS_DIR = "/content/drive/MyDrive/probe_results_nosig"
-    os.makedirs(RESULTS_DIR, exist_ok=True)
-
-    # Run probe on all saved agent files
-    for fname in sorted(os.listdir(AGENTS_DIR)):
-        if not fname.endswith("_agents.eqx"):
-            continue
-
-        base = fname.replace("_agents.eqx", "")
-        alive_path   = os.path.join(AGENTS_DIR, f"{base}_alive.npy")
-        out_path     = os.path.join(RESULTS_DIR, f"{base}_probe.json")
-
-        if os.path.exists(out_path):
-            continue
-        if not os.path.exists(alive_path):
-            print(f"Missing alive mask for {base}, skipping")
-            continue
-
-        print(f"Probing {base}...")
-        networks, alive = load_networks(os.path.join(AGENTS_DIR, fname), alive_path)
-
-        results = probe_population(networks)
-
-        # Filter to alive agents only
-        out = {k: v[alive].tolist() for k, v in results.items()}
-        out["n_alive"] = int(alive.sum())
-        out["mean_approach_disc"] = float(np.mean(results["approach_disc"][alive]))
-        out["mean_eat_disc"]      = float(np.mean(results["eat_disc"][alive]))
-
-        with open(out_path, "w") as f:
-            json.dump(out, f)
-
-        print(f"  n_alive={out['n_alive']}  approach_disc={out['mean_approach_disc']:.3f}  eat_disc={out['mean_eat_disc']:.3f}")
 
     print("Done.")
