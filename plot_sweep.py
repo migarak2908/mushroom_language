@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-NO_SIGNAL = True  # must match the flag used when disc_score_sweep_probed.py was run
+NO_SIGNAL = True  # must match the flag used when sweep.py was run
 RESULTS_DIR = f"/content/drive/MyDrive/mushroom_sweep_probed{'_nosig' if NO_SIGNAL else ''}"
 
 BLUE = "#2a78d6"      # approach / env discrimination
