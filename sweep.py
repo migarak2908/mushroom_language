@@ -37,8 +37,8 @@ PROBE_KEYS = (
     "poison_eat_rate", "approach_disc", "eat_disc",
 )
 
-RESULTS_DIR = f"/content/drive/MyDrive/mushroom_sweep_probed{'_nosig' if NO_SIGNAL else ''}"
-AGENTS_DIR = f"/content/drive/MyDrive/mushroom_sweep_probed_agents{'_nosig' if NO_SIGNAL else ''}"
+RESULTS_DIR = f"/content/drive/MyDrive/sweep{'_nosig' if NO_SIGNAL else ''}"
+AGENTS_DIR = f"/content/drive/MyDrive/sweep_agents{'_nosig' if NO_SIGNAL else ''}"
 os.makedirs(RESULTS_DIR, exist_ok=True)
 os.makedirs(AGENTS_DIR, exist_ok=True)
 
