@@ -115,4 +115,34 @@ for metric_key, color, label in METRICS:
     print(f"{label}: survived mean={np.mean(final_survived):.4f} (n={len(final_survived)}), "
           f"extinct mean={np.mean(final_extinct) if final_extinct else float('nan'):.4f} (n={len(final_extinct)})")
 
+    # --- Top 20 runs by final value: full trajectories, individually identifiable ---
+    ranked = sorted(
+        ((final_stat(r[metric_key]), r) for r in runs),
+        key=lambda t: t[0], reverse=True,
+    )
+    ranked = [(v, r) for v, r in ranked if not np.isnan(v)]
+    top20 = ranked[:20]
+
+    fig, ax = plt.subplots(figsize=(9.5, 5.5))
+    cmap = plt.get_cmap("tab20")
+    for i, (v, r) in enumerate(top20):
+        cfg_id = r["config"]["config_id"]
+        seed = r["seed"]
+        extinct_tag = " [extinct]" if r["extinction_chunk"] is not None else ""
+        ax.plot(r["probe_chunks"], r[metric_key], color=cmap(i % 20), linewidth=1.6,
+                label=f"cfg{cfg_id:03d} seed{seed} ({v:.3f}){extinct_tag}")
+
+    ax.axhline(0, color=GRID, linewidth=0.8, linestyle="--")
+    ax.set_xlabel("chunk (x100 env steps)")
+    ax.set_ylabel(label)
+    ax.set_title(f"top 20 runs by final {label}", fontsize=10)
+    ax.legend(fontsize=6.5, loc="center left", bbox_to_anchor=(1.01, 0.5))
+    plt.tight_layout()
+    plt.savefig(os.path.join(RESULTS_DIR, f"top20_{metric_key}_timeseries.png"), dpi=130, bbox_inches="tight")
+    plt.close(fig)
+
+    print(f"  top 20 by final {label}:")
+    for v, r in top20:
+        print(f"    cfg{r['config']['config_id']:03d} seed{r['seed']}: {v:.4f}")
+
 print("Done.")
