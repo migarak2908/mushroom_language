@@ -95,8 +95,9 @@ def run_one(cfg, seed):
         key, sk1, sk2, sk3, sk4 = jax.random.split(key, 5)
 
         obs = env._compute_obs(sk1, agents, mushrooms, PERC_RADIUS)
-        probs = eqx.filter_vmap(lambda n, o: n(o))(agents.network, obs)
+        probs, hidden = eqx.filter_vmap(lambda n, o, h: n(o, h))(agents.network, obs, agents.hidden)
         actions = jax.random.bernoulli(sk2, probs).astype(jnp.int32)
+        agents = eqx.tree_at(lambda a: a.hidden, agents, hidden)
 
         agents, mushrooms, edible, poisonous = env._compute_update(sk3, actions, agents, mushrooms)
         agents = env._compute_reproduce(sk4, agents, env.mutation_std)

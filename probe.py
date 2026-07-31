@@ -39,7 +39,7 @@ def run_probe_trial(network, direction, feature_idx, key):
         return jnp.sqrt((xd ** 2 + yd ** 2).astype(jnp.float32) + 1e-8), xd, yd
 
     def step(carry, _):
-        px, py, d, key = carry
+        px, py, d, hidden, key = carry
         key, subkey = jax.random.split(key)
 
         dist, xd, yd = dist_to_mush(px, py)
@@ -48,7 +48,7 @@ def run_probe_trial(network, direction, feature_idx, key):
         feat_obs = jnp.where(dist <= PERC_RADIUS, features, MUSH_LIBRARY[20])
         obs = jnp.concat([cos_[None], sin_[None], feat_obs, NEUTRAL_SIGNAL])
 
-        probs = network(obs)
+        probs, hidden = network(obs, hidden)
         actions = jax.random.bernoulli(subkey, probs).astype(jnp.int32)
 
         move_idx = 2 * actions[0] + actions[1]
@@ -59,9 +59,10 @@ def run_probe_trial(network, direction, feature_idx, key):
         new_dist, _, _ = dist_to_mush(new_px, new_py)
         ate = (new_px == mx) & (new_py == my)
 
-        return (new_px, new_py, new_d, key), (new_dist, ate.astype(jnp.float32))
+        return (new_px, new_py, new_d, hidden, key), (new_dist, ate.astype(jnp.float32))
 
-    _, (distances, ates) = jax.lax.scan(step, (px, py, d, key), None, length=PROBE_STEPS)
+    hidden = network.init_hidden()
+    _, (distances, ates) = jax.lax.scan(step, (px, py, d, hidden, key), None, length=PROBE_STEPS)
 
     approach_score = (INITIAL_DIST - jnp.min(distances)) / INITIAL_DIST
     ate_any = (ates.sum() > 0).astype(jnp.float32)

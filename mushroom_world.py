@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import equinox as eqx
 
 
-from agent import Network
+from agent import Network, Recurrent_Network
 
 # Initialise a world that is a grid of size X, Y. Populate this grid with n agents at random locations.
 # Populate this grid with mushrooms at random locations. Edible mushrooms should cover 2.5% of the total
@@ -43,6 +43,7 @@ class Agents(eqx.Module):
     direction: jnp.ndarray
     last_signal: jnp.ndarray
     network: Network
+    hidden: jnp.ndarray
     energy: jnp.ndarray
     mush_cooldown: jnp.ndarray
 
@@ -72,7 +73,14 @@ class MushroomWorld(eqx.Module):
     shuffle_period: int
     frozen_baseline: bool
     no_signal: bool
+    recurrent: bool = eqx.field(static=True, default=False)
 
+    def _build_networks(self, key, n):
+        keys = jax.random.split(key, n)
+        network_cls = Recurrent_Network if self.recurrent else Network
+        network = eqx.filter_vmap(lambda k: network_cls(k, input_dim=15, h_size=5, output_dim=5))(keys)
+        hidden = eqx.filter_vmap(lambda n: n.init_hidden())(network)
+        return network, hidden
 
     def reset_fn(self):
 
@@ -107,8 +115,7 @@ class MushroomWorld(eqx.Module):
 
         # initialise agent params
         key, subkey = jax.random.split(key)
-        keys = jax.random.split(subkey, max_agents)
-        network = eqx.filter_vmap(lambda k: Network(k, input_dim=15, h_size=5, output_dim=5))(keys)
+        network, hidden = self._build_networks(subkey, max_agents)
 
         # initialise mushroom positions, type and features
 
@@ -130,7 +137,7 @@ class MushroomWorld(eqx.Module):
 
 
         # create agents and mushrooms data structure
-        agents = Agents(posx=posx, posy=posy, alive=alive, direction=direction, last_signal=signal, network=network, energy=energy, mush_cooldown=mush_cooldown)
+        agents = Agents(posx=posx, posy=posy, alive=alive, direction=direction, last_signal=signal, network=network, hidden=hidden, energy=energy, mush_cooldown=mush_cooldown)
         mushrooms = Mushrooms(posx=mushroom_posx, posy=mushroom_posy, type=mushroom_type, features=mushroom_features, shuffle_countdown=shuffle_countdown)
 
         return (agents, mushrooms)
@@ -274,7 +281,7 @@ class MushroomWorld(eqx.Module):
                                       mushrooms.shuffle_countdown - 1)
 
         # update agents
-        agents = Agents(posx=new_posx, posy=new_posy, alive=alive, direction=new_direction, last_signal=new_signal, network=agents.network, energy=energy, mush_cooldown=cooldown)
+        agents = Agents(posx=new_posx, posy=new_posy, alive=alive, direction=new_direction, last_signal=new_signal, network=agents.network, hidden=agents.hidden, energy=energy, mush_cooldown=cooldown)
         mushrooms = Mushrooms(posx=mush_posx, posy=mush_posy, type=mushrooms.type, features=mushrooms.features,
                               shuffle_countdown=shuffle_countdown)
 
@@ -343,11 +350,14 @@ class MushroomWorld(eqx.Module):
         new_energy = jnp.where(newborn, child_energy, agents.energy)
         new_cooldown = jnp.where(newborn[:, None], 0, agents.mush_cooldown)
 
+        # newborns start with a blank hidden state rather than inheriting the parent's runtime activations
+        new_hidden = jnp.where(newborn.reshape((-1,) + (1,) * (agents.hidden.ndim - 1)), jnp.zeros_like(agents.hidden), agents.hidden)
+
         became_parent = jnp.zeros(self.max_agents, dtype=bool)
         became_parent = became_parent.at[parent_ranking].set(active_slots)
         new_energy = jnp.where(became_parent, parent_energy, new_energy)
 
-        agents = Agents(posx=new_posx, posy=new_posy, alive=new_alive, direction=new_dir, last_signal=new_signal, network=new_network, energy=new_energy, mush_cooldown=new_cooldown)
+        agents = Agents(posx=new_posx, posy=new_posy, alive=new_alive, direction=new_dir, last_signal=new_signal, network=new_network, hidden=new_hidden, energy=new_energy, mush_cooldown=new_cooldown)
 
         return agents
 
@@ -374,8 +384,7 @@ class MushroomWorld(eqx.Module):
 
         # initialise agent params
         key, subkey = jax.random.split(key)
-        keys = jax.random.split(subkey, max_agents)
-        network = eqx.filter_vmap(lambda k: Network(k, input_dim=15, h_size=5, output_dim=5))(keys)
+        network, hidden = self._build_networks(subkey, max_agents)
 
         dead = (agents.alive == 0)
         posx = jnp.where(dead, posx, agents.posx)
@@ -394,7 +403,9 @@ class MushroomWorld(eqx.Module):
 
         new_network = eqx.combine(merged_leaves, static_new)
 
-        agents = Agents(posx=posx, posy=posy, alive=alive, direction=direction, last_signal=signal, network=new_network, energy=energy, mush_cooldown=mush_cooldown)
+        new_hidden = jnp.where(dead.reshape((-1,) + (1,) * (hidden.ndim - 1)), hidden, agents.hidden)
+
+        agents = Agents(posx=posx, posy=posy, alive=alive, direction=direction, last_signal=signal, network=new_network, hidden=new_hidden, energy=energy, mush_cooldown=mush_cooldown)
 
         return agents
 
@@ -406,10 +417,9 @@ class MushroomWorld(eqx.Module):
         obs = self._compute_obs(subkey1, agents, mushrooms, perc_radius)
 
         # compute agent actions given observations
-        # raw_actions = eqx.filter_vmap(lambda n, o: n(o))(agents.network, obs)
-        # actions = jnp.round(raw_actions).astype(jnp.int32)
-        probs = eqx.filter_vmap(lambda n, o: n(o))(agents.network, obs)
+        probs, hidden = eqx.filter_vmap(lambda n, o, h: n(o, h))(agents.network, obs, agents.hidden)
         actions = jax.random.bernoulli(subkey2, probs).astype(jnp.int32)
+        agents = eqx.tree_at(lambda a: a.hidden, agents, hidden)
 
         # update agents and mushrooms given agent actions
         agents, mushrooms, _, _ = self._compute_update(subkey3, actions, agents, mushrooms)

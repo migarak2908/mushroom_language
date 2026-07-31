@@ -46,8 +46,9 @@ def run_one_seed(seed):
 
         alive_before = agents.alive.sum()
         obs = env._compute_obs(subkey1, agents, mushrooms, PERC_RADIUS)
-        probs = eqx.filter_vmap(lambda n, o: n(o))(agents.network, obs)
+        probs, hidden = eqx.filter_vmap(lambda n, o, h: n(o, h))(agents.network, obs, agents.hidden)
         actions = jax.random.bernoulli(subkey2, probs).astype(jnp.int32)
+        agents = eqx.tree_at(lambda a: a.hidden, agents, hidden)
         agents, mushrooms, edible_consumed, poisonous_consumed = env._compute_update(subkey3, actions, agents, mushrooms)
         alive_post_update = agents.alive.sum()
         agents = env._compute_respawn(subkey4, agents)
