@@ -22,7 +22,7 @@ REPROD_THRESHOLD = 210.
 PERC_RADIUS = 10
 SHUFFLE_PERIOD = 200
 NO_SIGNAL = True          # flip to False to sweep the with-signal condition
-RECURRENT = False         # flip to True to sweep the recurrent-network condition
+RECURRENT = True         # flip to True to sweep the recurrent-network condition
 PAIN_PLEASURE = True      # flip to False to sweep without the pain/pleasure input
 H_SIZE = 5                # hidden layer width -- fixed per sweep run, not part of the LHS
                           # (interacts with mutation_std and forces recompilation if varied per-config)
