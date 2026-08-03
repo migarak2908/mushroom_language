@@ -22,6 +22,10 @@ REPROD_THRESHOLD = 210.
 PERC_RADIUS = 10
 SHUFFLE_PERIOD = 200
 NO_SIGNAL = True          # flip to False to sweep the with-signal condition
+RECURRENT = False         # flip to True to sweep the recurrent-network condition
+PAIN_PLEASURE = True      # flip to False to sweep without the pain/pleasure input
+H_SIZE = 5                # hidden layer width -- fixed per sweep run, not part of the LHS
+                          # (interacts with mutation_std and forces recompilation if varied per-config)
 STEPS = 100_000
 CHUNK = 100
 PROBE_EVERY = 10          # chunks (1000 env steps) between isolation-probe evaluations
@@ -37,8 +41,12 @@ PROBE_KEYS = (
     "poison_eat_rate", "approach_disc", "eat_disc",
 )
 
-RESULTS_DIR = f"/content/drive/MyDrive/sweep{'_nosig' if NO_SIGNAL else ''}"
-AGENTS_DIR = f"/content/drive/MyDrive/sweep_agents{'_nosig' if NO_SIGNAL else ''}"
+TAG = (('_nosig' if NO_SIGNAL else '')
+       + ('_recurrent' if RECURRENT else '')
+       + ('_nopainpleasure' if not PAIN_PLEASURE else '')
+       + (f'_h{H_SIZE}' if H_SIZE != 5 else ''))
+RESULTS_DIR = f"/content/drive/MyDrive/sweep{TAG}"
+AGENTS_DIR = f"/content/drive/MyDrive/sweep_agents{TAG}"
 os.makedirs(RESULTS_DIR, exist_ok=True)
 os.makedirs(AGENTS_DIR, exist_ok=True)
 
@@ -85,6 +93,9 @@ def run_one(cfg, seed):
         poison_multiplier=cfg["poison_multiplier"],
         frozen_baseline=False,
         no_signal=NO_SIGNAL,
+        recurrent=RECURRENT,
+        pain_pleasure=PAIN_PLEASURE,
+        h_size=H_SIZE,
     )
     agents, mushrooms = env.reset_fn()
     dynamic_agents, static_agents = eqx.partition(agents, eqx.is_array)

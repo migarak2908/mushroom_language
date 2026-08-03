@@ -46,6 +46,7 @@ class Agents(eqx.Module):
     hidden: jnp.ndarray
     energy: jnp.ndarray
     mush_cooldown: jnp.ndarray
+    last_outcome: jnp.ndarray
 
 
 class Mushrooms(eqx.Module):
@@ -74,11 +75,13 @@ class MushroomWorld(eqx.Module):
     frozen_baseline: bool
     no_signal: bool
     recurrent: bool = eqx.field(static=True, default=False)
+    pain_pleasure: bool = eqx.field(static=True, default=True)
+    h_size: int = eqx.field(static=True, default=5)
 
     def _build_networks(self, key, n):
         keys = jax.random.split(key, n)
         network_cls = Recurrent_Network if self.recurrent else Network
-        network = eqx.filter_vmap(lambda k: network_cls(k, input_dim=15, h_size=5, output_dim=5))(keys)
+        network = eqx.filter_vmap(lambda k: network_cls(k, input_dim=17, h_size=self.h_size, output_dim=5))(keys)
         hidden = eqx.filter_vmap(lambda n: n.init_hidden())(network)
         return network, hidden
 
@@ -112,6 +115,7 @@ class MushroomWorld(eqx.Module):
         # initialise energy and empty mushroom cooldowns
         energy = jnp.where(alive, self.energy_start, 0)
         mush_cooldown = jnp.zeros((max_agents, num_mushroom))
+        last_outcome = jnp.zeros((max_agents, 2))
 
         # initialise agent params
         key, subkey = jax.random.split(key)
@@ -137,7 +141,7 @@ class MushroomWorld(eqx.Module):
 
 
         # create agents and mushrooms data structure
-        agents = Agents(posx=posx, posy=posy, alive=alive, direction=direction, last_signal=signal, network=network, hidden=hidden, energy=energy, mush_cooldown=mush_cooldown)
+        agents = Agents(posx=posx, posy=posy, alive=alive, direction=direction, last_signal=signal, network=network, hidden=hidden, energy=energy, mush_cooldown=mush_cooldown, last_outcome=last_outcome)
         mushrooms = Mushrooms(posx=mushroom_posx, posy=mushroom_posy, type=mushroom_type, features=mushroom_features, shuffle_countdown=shuffle_countdown)
 
         return (agents, mushrooms)
@@ -212,8 +216,7 @@ class MushroomWorld(eqx.Module):
             signals = SIGNALS[signals]
 
 
-
-        obs = jnp.concat([input_cos[:, None], input_sin[:, None], features, signals], axis=1)
+        obs = jnp.concat([input_cos[:, None], input_sin[:, None], features, signals, agents.last_outcome], axis=1)
 
         return obs
 
@@ -269,6 +272,15 @@ class MushroomWorld(eqx.Module):
         edible_consumed = (consume_mushroom * (mushroom_type == 1)[None, :]).sum()
         poisonous_consumed = (consume_mushroom * (mushroom_type == self.poison_multiplier)[None, :]).sum()
 
+        # pain/pleasure flash: reflects only this step's consumption, not a running state
+        if self.pain_pleasure:
+            pleasure = (consume_mushroom & (mushroom_type == 1)[None, :]).any(axis=1)
+            pain = (consume_mushroom & (mushroom_type == self.poison_multiplier)[None, :]).any(axis=1)
+            last_outcome = jnp.stack([pain, pleasure], axis=1).astype(jnp.float32)
+            last_outcome = jnp.where(agents.alive[:, None], last_outcome, 0.0)
+        else:
+            last_outcome = jnp.zeros_like(agents.last_outcome)
+
         key, subkey = jax.random.split(key)
         all_cells = jnp.arange(self.grid_x * self.grid_y)
         mush_chosen = jax.random.choice(subkey, all_cells, shape=(self.nb_mushrooms,), replace=False)
@@ -281,7 +293,7 @@ class MushroomWorld(eqx.Module):
                                       mushrooms.shuffle_countdown - 1)
 
         # update agents
-        agents = Agents(posx=new_posx, posy=new_posy, alive=alive, direction=new_direction, last_signal=new_signal, network=agents.network, hidden=agents.hidden, energy=energy, mush_cooldown=cooldown)
+        agents = Agents(posx=new_posx, posy=new_posy, alive=alive, direction=new_direction, last_signal=new_signal, network=agents.network, hidden=agents.hidden, energy=energy, mush_cooldown=cooldown, last_outcome=last_outcome)
         mushrooms = Mushrooms(posx=mush_posx, posy=mush_posy, type=mushrooms.type, features=mushrooms.features,
                               shuffle_countdown=shuffle_countdown)
 
@@ -352,12 +364,13 @@ class MushroomWorld(eqx.Module):
 
         # newborns start with a blank hidden state rather than inheriting the parent's runtime activations
         new_hidden = jnp.where(newborn.reshape((-1,) + (1,) * (agents.hidden.ndim - 1)), jnp.zeros_like(agents.hidden), agents.hidden)
+        new_outcome = jnp.where(newborn[:, None], 0.0, agents.last_outcome)
 
         became_parent = jnp.zeros(self.max_agents, dtype=bool)
         became_parent = became_parent.at[parent_ranking].set(active_slots)
         new_energy = jnp.where(became_parent, parent_energy, new_energy)
 
-        agents = Agents(posx=new_posx, posy=new_posy, alive=new_alive, direction=new_dir, last_signal=new_signal, network=new_network, hidden=new_hidden, energy=new_energy, mush_cooldown=new_cooldown)
+        agents = Agents(posx=new_posx, posy=new_posy, alive=new_alive, direction=new_dir, last_signal=new_signal, network=new_network, hidden=new_hidden, energy=new_energy, mush_cooldown=new_cooldown, last_outcome=new_outcome)
 
         return agents
 
@@ -381,6 +394,7 @@ class MushroomWorld(eqx.Module):
         # initialise energy and empty mushroom cooldowns
         energy = jnp.full((max_agents,), self.energy_start)
         mush_cooldown = jnp.zeros((max_agents, num_mushroom))
+        last_outcome = jnp.zeros((max_agents, 2))
 
         # initialise agent params
         key, subkey = jax.random.split(key)
@@ -394,6 +408,7 @@ class MushroomWorld(eqx.Module):
         signal = jnp.where(dead, signal, agents.last_signal)
         energy = jnp.where(dead, energy, agents.energy)
         mush_cooldown = jnp.where(dead[:, None], mush_cooldown, agents.mush_cooldown)
+        last_outcome = jnp.where(dead[:, None], last_outcome, agents.last_outcome)
 
         params_new, static_new = eqx.partition(network, eqx.is_inexact_array)
         params_old, _ = eqx.partition(agents.network, eqx.is_inexact_array)
@@ -405,7 +420,7 @@ class MushroomWorld(eqx.Module):
 
         new_hidden = jnp.where(dead.reshape((-1,) + (1,) * (hidden.ndim - 1)), hidden, agents.hidden)
 
-        agents = Agents(posx=posx, posy=posy, alive=alive, direction=direction, last_signal=signal, network=new_network, hidden=new_hidden, energy=energy, mush_cooldown=mush_cooldown)
+        agents = Agents(posx=posx, posy=posy, alive=alive, direction=direction, last_signal=signal, network=new_network, hidden=new_hidden, energy=energy, mush_cooldown=mush_cooldown, last_outcome=last_outcome)
 
         return agents
 

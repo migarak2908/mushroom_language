@@ -30,9 +30,9 @@ def find_one_agent_file(agents_dir):
     return None
 
 
-def make_dummy_networks(seed=0):
+def make_dummy_networks(seed=0, h_size=5):
     keys = jax.random.split(jax.random.key(seed), MAX_AGENTS)
-    return eqx.filter_vmap(lambda k: Network(k, input_dim=15, h_size=5, output_dim=5))(keys)
+    return eqx.filter_vmap(lambda k: Network(k, input_dim=17, h_size=h_size, output_dim=5))(keys)
 
 
 def main():

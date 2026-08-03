@@ -15,6 +15,7 @@ MAX_AGENTS = 5000
 PROBE_REPLICATES = 8  # default stochastic rollouts per (agent, direction, feature) condition
 
 NEUTRAL_SIGNAL = SIGNALS[-1]  # [0.5, 0.5, 0.5] — matches no_signal training condition
+NEUTRAL_OUTCOME = jnp.zeros(2)  # [pain, pleasure] — no consumption event in this synthetic probe step
 
 
 def run_probe_trial(network, direction, feature_idx, key):
@@ -46,7 +47,7 @@ def run_probe_trial(network, direction, feature_idx, key):
         cos_ = xd.astype(jnp.float32) / dist
         sin_ = yd.astype(jnp.float32) / dist
         feat_obs = jnp.where(dist <= PERC_RADIUS, features, MUSH_LIBRARY[20])
-        obs = jnp.concat([cos_[None], sin_[None], feat_obs, NEUTRAL_SIGNAL])
+        obs = jnp.concat([cos_[None], sin_[None], feat_obs, NEUTRAL_SIGNAL, NEUTRAL_OUTCOME])
 
         probs, hidden = network(obs, hidden)
         actions = jax.random.bernoulli(subkey, probs).astype(jnp.int32)
@@ -120,11 +121,11 @@ def probe_population(networks, key, n_replicates=PROBE_REPLICATES):
     }
 
 
-def load_networks(agents_path, alive_path):
+def load_networks(agents_path, alive_path, h_size=5):
     alive = np.load(alive_path).astype(bool)
     dummy_keys = jax.random.split(jax.random.key(0), MAX_AGENTS)
     dummy_networks = eqx.filter_vmap(
-        lambda k: Network(k, input_dim=15, h_size=5, output_dim=5)
+        lambda k: Network(k, input_dim=17, h_size=h_size, output_dim=5)
     )(dummy_keys)
     networks = eqx.tree_deserialise_leaves(agents_path, dummy_networks)
     return networks, alive
