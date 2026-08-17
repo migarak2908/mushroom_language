@@ -67,18 +67,17 @@ PROBE_KEYS = (
 )
 
 # ---------------------------------------------------------------------------
-# Curated config selection (n=30) -- edit this list to change what gets run.
+# Curated config selection (n=20) -- edit this list to change what gets run.
 # Built from the paired feedforward vs. recurrent+pain/pleasure comparison:
-#   - top 15 configs by gain in individual (probe eat) discrimination
-#   - bottom 10 configs (recurrent+pp did worse than feedforward -- negative
+#   - top 10 configs by gain in individual (probe eat) discrimination
+#   - bottom 7 configs (recurrent+pp did worse than feedforward -- negative
 #     controls, important for not overclaiming a universal effect)
 #   - config 97, the abstract's highlighted decoupled case
-#   - a handful spread across energy_decay quartiles, to keep coverage of
+#   - 2 fillers spread across energy_decay quartiles, to keep coverage of
 #     the "permissive region" story rather than only cherry-picked extremes
 # ---------------------------------------------------------------------------
 SELECTED_CONFIG_IDS = sorted(set([
-    3, 5, 6, 8, 9, 10, 12, 13, 15, 16, 19, 24, 32, 35, 38, 49, 52, 55, 60,
-    62, 67, 69, 70, 77, 81, 83, 90, 95, 97, 99,
+    3, 5, 6, 8, 9, 15, 19, 24, 32, 49, 52, 60, 62, 69, 77, 81, 83, 95, 97, 99,
 ]))
 
 # Which of the 4 cells to actually simulate.
