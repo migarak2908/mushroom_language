@@ -1,5 +1,5 @@
 from mushroom_world import SIGNALS, MUSH_LIBRARY, DX, DY, TURN, MOVE
-from agent import Network
+from agent import Network, Recurrent_Network
 import jax
 import jax.numpy as jnp
 import equinox as eqx
@@ -121,11 +121,16 @@ def probe_population(networks, key, n_replicates=PROBE_REPLICATES):
     }
 
 
-def load_networks(agents_path, alive_path, h_size=5):
+def load_networks(agents_path, alive_path, h_size=5, recurrent=False):
+    """recurrent must match whatever the saved agents were actually trained
+    with -- Network and Recurrent_Network have different pytree structures,
+    so deserialising against the wrong dummy silently produces garbage
+    (or errors) rather than a clean failure."""
     alive = np.load(alive_path).astype(bool)
     dummy_keys = jax.random.split(jax.random.key(0), MAX_AGENTS)
+    network_cls = Recurrent_Network if recurrent else Network
     dummy_networks = eqx.filter_vmap(
-        lambda k: Network(k, input_dim=17, h_size=h_size, output_dim=5)
+        lambda k: network_cls(k, input_dim=17, h_size=h_size, output_dim=5)
     )(dummy_keys)
     networks = eqx.tree_deserialise_leaves(agents_path, dummy_networks)
     return networks, alive
