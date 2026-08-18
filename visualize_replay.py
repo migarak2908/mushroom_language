@@ -270,7 +270,7 @@ def make_video(data, eat_disc_by_slot, sample_every, fps, out_path):
         mush_scat.set_offsets(np.column_stack([data["mush_posx"][step], data["mush_posy"][step]]))
         mush_scat.set_color(mush_colors)
 
-        alive_mask = data["alive"][step]
+        alive_mask = data["alive"][step].astype(bool)
         agent_scat.set_offsets(np.column_stack([data["posx"][step][alive_mask], data["posy"][step][alive_mask]]))
         agent_scat.set_color(agent_rgba[alive_mask])
 
