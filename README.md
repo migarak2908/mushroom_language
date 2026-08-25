@@ -85,13 +85,13 @@ where $\bar{E}$ is the fraction of rollouts ending in consumption (8 stochastic 
 ## 📚 References & Acknowledgements
 
 * **Primary Reference:**  
-  Cangelosi, A., & Parisi, D. (1998). *The emergence of a language in an evolving population of neural networks.* Connection Science, 10(2), 83–97.[cite: 1]
+  Cangelosi, A., & Parisi, D. (1998). *The emergence of a language in an evolving population of neural networks.* Connection Science, 10(2), 83–97.
 
 * **Funding & Support:**  
-  Registration supported by the **Igor Ivkovic Acts of Kindness Award**.[cite: 1]
+  Registration supported by the **Igor Ivkovic Acts of Kindness Award.
 
 * **AI Assistance Disclosure:**  
-  Claude (Anthropic) was used to assist with some code development; the author reviewed, tested, and validated all code.[cite: 1]
+  Claude (Anthropic) was used to assist with some code development; the author reviewed, tested, and validated all code.
 
 * **Citation (BibTeX):**
   ```bibtex
