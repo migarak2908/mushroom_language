@@ -30,8 +30,11 @@ that are already dead by the end of the window (never resurrected) are
 drawn in flat neutral gray in the frames where they were still alive,
 since no end-of-window score exists for them.
 """
-import hashlib
 import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+import hashlib
 
 import numpy as np
 import jax

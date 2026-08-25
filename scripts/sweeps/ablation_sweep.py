@@ -23,8 +23,11 @@ up exactly with the existing feedforward/recurrent sweep data. NOT imported
 from sweep.py directly, since sweep.py runs its full sweep as a top-level
 side effect on import.
 """
-import json
 import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+import json
 import hashlib
 
 import numpy as np

@@ -5,9 +5,10 @@ whether cost scales sub-linearly (batch grows into unused GPU parallelism) or
 ~linearly (single dispatch already saturates the device) can only be measured,
 not reasoned about in the abstract.
 """
-
 import os
 import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
 import time
 
 import jax

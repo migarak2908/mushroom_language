@@ -19,6 +19,8 @@ param x metric x condition combinations, since a number is easier to put a
 sentence around than "the trend line curves upward a bit."
 """
 import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import numpy as np
 import pandas as pd

@@ -12,9 +12,11 @@ For each metric, produces:
   - a top-N plot: the TOP_N runs by final windowed value, each an individually
     identifiable line (labeled by config/seed)
 """
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import json
-import os
 
 import numpy as np
 import matplotlib.pyplot as plt

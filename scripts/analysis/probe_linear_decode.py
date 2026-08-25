@@ -26,6 +26,10 @@ than the raw input), Z_ff, and Z_rec. Grouped so all 8 headings of a variant
 stay in the same fold, otherwise the classifier could exploit heading-
 specific artifacts instead of decoding the class itself.
 """
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
 import glob
 
 import numpy as np

@@ -12,8 +12,11 @@ away before it hits disk.
 
 Edit the constants below to point at the run you want, then run this file.
 """
-import glob
 import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+import glob
 
 import jax
 import numpy as np
