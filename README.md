@@ -24,8 +24,8 @@ This project investigates the emergence of feature discrimination under **open-e
 ## 🔬 Model & Architecture
 
 <p align="center">
-  <img src="fig_setup_world.png" width="45%" alt="Toroidal World Setup" />
-  <img src="fig_setup_controller.png" width="50%" alt="Agent Neural Controller Architecture" />
+  <img src="figs/fig_setup_world.png" width="45%" alt="Toroidal World Setup" />
+  <img src="figs/fig_setup_controller.png" width="50%" alt="Agent Neural Controller Architecture" />
 </p>
 
 * **World:** A $100 \times 100$ toroidal gridworld supporting a persistent population (up to 5,000 agents, seeded with 2,000) with 100 mushrooms (50 edible, 50 poisonous).
@@ -59,8 +59,8 @@ where $\bar{E}$ is the fraction of rollouts ending in consumption (8 stochastic 
 ## 📊 Key Results
 
 <p align="center">
-  <img src="fig_paired_delta.png" width="48%" alt="Architecture Matched Pairs Comparison" />
-  <img src="fig_mutation_emergence.png" width="48%" alt="Emergence Driven by Mutation Magnitude" />
+  <img src="figs/fig_paired_delta.png" width="48%" alt="Architecture Matched Pairs Comparison" />
+  <img src="figs/fig_mutation_emergence.png" width="48%" alt="Emergence Driven by Mutation Magnitude" />
 </p>
 
 | Finding | Feedforward | Recurrent | Takeaway |
